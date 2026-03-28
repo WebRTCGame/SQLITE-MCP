@@ -79,7 +79,7 @@ def test_render_markdown_views_uses_database_as_source_of_truth(db: DatabaseMana
         "task",
         name="Bootstrap memory",
         status="pending",
-        attributes={"priority": "high"},
+        attributes={"priority": "high", "phase_number": "4"},
     )
     db.append_content(
         "task.bootstrap",
@@ -90,6 +90,10 @@ def test_render_markdown_views_uses_database_as_source_of_truth(db: DatabaseMana
     rendered = db.render_markdown_views(["todo", "notes", "overview"])
 
     assert set(rendered) == {"todo.md", "notes.md", "overview.md"}
+    assert rendered["todo.md"].startswith("<!-- Generated file: do not edit manually. -->")
+    assert "<!-- Description: Generated task backlog grouped from the SQLite source of truth. -->" in rendered["todo.md"]
+    assert "<!-- Generated at: " in rendered["todo.md"]
+    assert "## Phase 4" in rendered["todo.md"]
     assert "Bootstrap memory" in rendered["todo.md"]
     assert "Use explicit MCP verbs for write operations." in rendered["notes.md"]
     assert "Project Memory Overview" in rendered["overview.md"]
@@ -228,3 +232,101 @@ def test_prune_content_retention_supports_dry_run_and_deletion(db: DatabaseManag
     entity = db.get_entity("task.logs", include_related=True)
     remaining_logs = [item for item in entity["content"] if item["content_type"] == "log"]
     assert len(remaining_logs) == 2
+
+
+def test_project_state_and_open_tasks_return_compact_summary_shapes(db: DatabaseManager) -> None:
+    db.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+    db.upsert_entity(
+        "task.open",
+        "task",
+        name="Open task",
+        status="pending",
+        attributes={"priority": "high", "owner": "ai"},
+    )
+    db.upsert_entity("task.done", "task", name="Done task", status="done")
+
+    project_state = db.get_project_state(limit=5)
+    assert project_state["project"]["id"] == "project.sqlite-mcp"
+    assert project_state["open_task_count"] == 1
+    assert any(item["id"] == "project.sqlite-mcp.todo" for item in project_state["memory_areas"])
+
+    open_tasks = db.get_open_tasks(limit=10, offset=0)
+    assert open_tasks["total_count"] == 1
+    assert open_tasks["items"][0]["id"] == "task.open"
+    assert open_tasks["items"][0]["priority"] == "high"
+    assert open_tasks["items"][0]["owner"] == "ai"
+
+    compact_state = db.get_project_state(limit=5, compact=True)
+    assert compact_state["schema"] == "project_state.v1"
+    assert compact_state["compact"] is True
+    assert compact_state["data"]["project"]["id"] == "project.sqlite-mcp"
+
+    compact_tasks = db.get_open_tasks(limit=10, offset=0, compact=True)
+    assert compact_tasks["schema"] == "open_tasks.v1"
+    assert compact_tasks["data"]["has_more"] is False
+
+
+def test_decision_log_architecture_summary_reasoning_and_dependency_views(db: DatabaseManager) -> None:
+    db.create_entity("decision.schema", "decision", name="Schema direction", status="accepted")
+    db.append_content(
+        "decision.schema",
+        "reasoning",
+        "Prefer compact MCP responses before changing storage encoding.",
+    )
+    db.create_entity("module.api", "module", name="API Layer", status="active")
+    db.create_entity("service.db", "service", name="DB Service", status="active")
+    db.create_entity("file.server", "file", name="server.py", status="active")
+    db.connect_entities("module.api", "service.db", "depends_on")
+    db.connect_entities("service.db", "file.server", "contains")
+
+    decision_log = db.get_decision_log(limit=10, offset=0)
+    assert decision_log["total_count"] == 1
+    assert decision_log["items"][0]["id"] == "decision.schema"
+    assert "compact MCP responses" in decision_log["items"][0]["latest_note"]
+
+    architecture = db.get_architecture_summary(node_limit=10, relationship_limit=10)
+    assert architecture["node_count"] >= 3
+    assert any(item["id"] == "module.api" for item in architecture["nodes"])
+    assert any(item["type"] == "depends_on" for item in architecture["relationships"])
+
+    reasoning = db.get_recent_reasoning(limit=10, offset=0)
+    assert reasoning["total_count"] == 1
+    assert reasoning["items"][0]["entity_id"] == "decision.schema"
+
+    dependency_view = db.get_dependency_view(root_entity_id="module.api", max_depth=2, limit=20)
+    assert dependency_view["root"]["id"] == "module.api"
+    assert any(item["to_entity"] == "service.db" for item in dependency_view["relationships"])
+
+
+def test_dependency_view_without_root_returns_filtered_graph_slice(db: DatabaseManager) -> None:
+    db.create_entity("task.alpha", "task", name="Alpha")
+    db.create_entity("task.beta", "task", name="Beta")
+    db.create_entity("task.gamma", "task", name="Gamma")
+    db.connect_entities("task.alpha", "task.beta", "depends_on")
+    db.connect_entities("task.beta", "task.gamma", "blocks")
+    db.connect_entities("task.alpha", "task.gamma", "relates_to")
+
+    dependency_view = db.get_dependency_view(limit=10)
+
+    assert dependency_view["root"] is None
+    assert dependency_view["relationship_types"] == ["blocks", "depends_on"]
+    assert dependency_view["relationship_count"] == 2
+    assert all(item["type"] in {"blocks", "depends_on"} for item in dependency_view["relationships"])
+
+
+def test_json_snapshot_export_and_import_round_trip(db: DatabaseManager, tmp_path: Path) -> None:
+    db.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+    db.upsert_entity("task.backup", "task", name="Backup state", status="planned")
+    snapshot = db.export_json_snapshot()
+
+    restored = DatabaseManager(tmp_path / "restored.db")
+    restored.connect()
+    try:
+        result = restored.import_json_snapshot(snapshot, replace=True)
+        assert result["schema"] == "sqlite_project_memory_snapshot.v1"
+
+        project_state = restored.get_project_state(limit=5)
+        assert project_state["project"]["id"] == "project.sqlite-mcp"
+        assert any(item["id"] == "task.backup" for item in restored.get_open_tasks(limit=20)["items"])
+    finally:
+        restored.close()

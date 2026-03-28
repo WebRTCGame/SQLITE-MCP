@@ -61,6 +61,12 @@ The server also creates an FTS5 index for `content.body` when available.
 - `create_snapshot`
 - `get_snapshot`
 - `get_project_overview`
+- `get_project_state`
+- `get_open_tasks`
+- `get_decision_log`
+- `get_architecture_summary`
+- `get_recent_reasoning`
+- `get_dependency_view`
 - `get_recent_activity`
 - `get_database_health`
 - `prune_content_retention`
@@ -70,6 +76,8 @@ The server also creates an FTS5 index for `content.body` when available.
 - `render_markdown_views`
 - `export_markdown_views`
 - `server_info`
+
+High-frequency summary tools also support a `compact=true` mode that returns an explicit schema envelope for stable machine consumption.
 
 ## Resources And Prompt
 
@@ -100,6 +108,25 @@ python -m sqlite_mcp_server
 ```
 
 The default database path is `data/project_memory.db` under the repository root.
+
+## Admin CLI
+
+For local bootstrap and inspection workflows, the package also exposes an admin CLI:
+
+```powershell
+sqlite-project-memory-admin bootstrap-self --repo-root .
+sqlite-project-memory-admin project-state
+sqlite-project-memory-admin health
+sqlite-project-memory-admin export-views todo roadmap architecture
+sqlite-project-memory-admin export-json --output-path exports/project_memory.snapshot.json
+sqlite-project-memory-admin import-json --input-path exports/project_memory.snapshot.json
+```
+
+This is mainly useful when you want the project to use its own SQLite memory store without writing one-off scripts.
+
+## Sample MCP Config
+
+A repo-local sample MCP client configuration is available at [.vscode/mcp.sample.json](d:/Programming%20Projects/SQLITE%20MCP/SQLITE-MCP/.vscode/mcp.sample.json). Adjust the Python path if needed for another machine.
 
 ## Configuration
 
@@ -143,9 +170,10 @@ If this server is going to be called frequently by an AI, the useful surface is 
 The intended pattern is:
 
 1. Use explicit domain tools for writes.
-2. Use `run_read_query` only for read-only inspection.
-3. Generate markdown views only when a person or downstream tool needs a document.
-4. Keep SQLite authoritative.
+2. Use summary-first read tools such as `get_project_state`, `get_open_tasks`, `get_decision_log`, `get_architecture_summary`, `get_recent_reasoning`, and `get_dependency_view` before falling back to lower-level queries.
+3. Use `run_read_query` only for read-only inspection when the built-in summaries are not enough.
+4. Generate markdown views only when a person or downstream tool needs a document.
+5. Keep SQLite authoritative.
 
 For long-running AI usage, the hygiene tools matter as much as the write tools:
 

@@ -19,6 +19,8 @@ dev = [
 
 [project.scripts]
 sqlite-project-memory-mcp = "sqlite_mcp_server.server:main"
+sqlite-project-memory-admin = "sqlite_mcp_server.cli:main"
+
 
 [tool.setuptools.packages.find]
 where = ["src"]

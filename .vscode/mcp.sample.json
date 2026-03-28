@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "sqlite-project-memory": {
+      "type": "stdio",
+      "command": "C:/Users/georg/AppData/Local/Programs/Python/Python313/python.exe",
+      "args": [
+        "-m",
+        "sqlite_mcp_server"
+      ],
+      "env": {
+        "SQLITE_MCP_TRANSPORT": "stdio",
+        "SQLITE_MCP_DB_PATH": "D:/Programming Projects/SQLITE MCP/SQLITE-MCP/data/project_memory.db",
+        "SQLITE_MCP_EXPORT_DIR": "D:/Programming Projects/SQLITE MCP/SQLITE-MCP/exports"
+      }
+    }
+  },
+  "inputs": []
+}

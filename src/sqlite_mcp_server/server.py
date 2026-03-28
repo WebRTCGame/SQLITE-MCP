@@ -424,6 +424,85 @@ def get_project_overview(ctx: Context | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_project_state(limit: int = 10, compact: bool = False, ctx: Context | None = None) -> dict[str, Any]:
+    """Return a compact project-state summary for AI resumption and status checks."""
+    assert ctx is not None
+    return _db(ctx).get_project_state(limit=limit, compact=compact)
+
+
+@mcp.tool()
+def get_open_tasks(
+    limit: int = 25,
+    offset: int = 0,
+    compact: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Return open task-like entities in a compact, deterministic shape."""
+    assert ctx is not None
+    return _db(ctx).get_open_tasks(limit=limit, offset=offset, compact=compact)
+
+
+@mcp.tool()
+def get_decision_log(
+    limit: int = 25,
+    offset: int = 0,
+    compact: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Return decisions and recent supporting note excerpts without requiring ad hoc SQL."""
+    assert ctx is not None
+    return _db(ctx).get_decision_log(limit=limit, offset=offset, compact=compact)
+
+
+@mcp.tool()
+def get_architecture_summary(
+    node_limit: int = 100,
+    relationship_limit: int = 150,
+    compact: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Return a compact architecture-oriented node and relationship summary."""
+    assert ctx is not None
+    return _db(ctx).get_architecture_summary(
+        node_limit=node_limit,
+        relationship_limit=relationship_limit,
+        compact=compact,
+    )
+
+
+@mcp.tool()
+def get_recent_reasoning(
+    limit: int = 20,
+    offset: int = 0,
+    compact: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Return recent reasoning excerpts for quick AI context recovery."""
+    assert ctx is not None
+    return _db(ctx).get_recent_reasoning(limit=limit, offset=offset, compact=compact)
+
+
+@mcp.tool()
+def get_dependency_view(
+    root_entity_id: str | None = None,
+    max_depth: int = 2,
+    relationship_types: list[str] | None = None,
+    limit: int = 200,
+    compact: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Return dependency-oriented graph data with stable compact fields."""
+    assert ctx is not None
+    return _db(ctx).get_dependency_view(
+        root_entity_id=root_entity_id,
+        max_depth=max_depth,
+        relationship_types=relationship_types,
+        limit=limit,
+        compact=compact,
+    )
+
+
+@mcp.tool()
 def get_recent_activity(limit: int = 20, ctx: Context | None = None) -> dict[str, Any]:
     """Return recent entities, content, and events to help an AI resume context quickly."""
     assert ctx is not None

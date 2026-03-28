@@ -4,6 +4,7 @@ import json
 import re
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, UTC
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterator
@@ -33,6 +34,7 @@ COMMON_STATUS_VOCABULARY = {
     "task": {"active", "blocked", "done", "in_progress", "pending", "planned"},
     "bug": {"active", "done", "investigating", "pending"},
     "feature": {"active", "done", "planned", "proposed"},
+    "phase": {"active", "done", "planned"},
     "decision": {"accepted", "draft", "rejected", "superseded"},
     "roadmap": {"active", "done", "planned"},
 }
@@ -96,6 +98,25 @@ def _slugify(value: str) -> str:
 
 def _normalized_name(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _bounded_limit(limit: int, *, minimum: int = 1, maximum: int = 100) -> int:
+    return max(minimum, min(limit, maximum))
+
+
+def _bounded_offset(offset: int) -> int:
+    return max(0, offset)
+
+
+def _summary_envelope(schema_name: str, data: dict[str, Any], *, compact: bool) -> dict[str, Any]:
+    if not compact:
+        return data
+    return {
+        "schema": schema_name,
+        "schema_version": 1,
+        "compact": True,
+        "data": data,
+    }
 
 
 class DatabaseManager:
@@ -991,6 +1012,523 @@ class DatabaseManager:
             "snapshot_count": self._fetch_one("SELECT COUNT(*) AS count FROM snapshots") or {"count": 0},
         }
 
+    def get_project_state(self, limit: int = 10, compact: bool = False) -> dict[str, Any]:
+        limit = _bounded_limit(limit, maximum=50)
+        project = self._fetch_one(
+            """
+            SELECT id, type, name, status, updated_at
+            FROM entities
+            WHERE type = 'project'
+            ORDER BY updated_at DESC, id ASC
+            LIMIT 1
+            """
+        )
+        project_id = project["id"] if project else None
+
+        memory_areas: list[dict[str, Any]] = []
+        if project_id is not None:
+            memory_areas = self._fetch_all(
+                """
+                SELECT e.id, e.type, e.name, e.status, e.updated_at
+                FROM relationships r
+                JOIN entities e ON e.id = r.to_entity
+                WHERE r.from_entity = ? AND r.type = 'has_memory_area'
+                ORDER BY e.type ASC, e.id ASC
+                """,
+                (project_id,),
+            )
+
+        counts = {
+            "entities": (self._fetch_one("SELECT COUNT(*) AS count FROM entities") or {"count": 0})["count"],
+            "relationships": (self._fetch_one("SELECT COUNT(*) AS count FROM relationships") or {"count": 0})["count"],
+            "content": (self._fetch_one("SELECT COUNT(*) AS count FROM content") or {"count": 0})["count"],
+            "events": (self._fetch_one("SELECT COUNT(*) AS count FROM events") or {"count": 0})["count"],
+            "snapshots": (self._fetch_one("SELECT COUNT(*) AS count FROM snapshots") or {"count": 0})["count"],
+        }
+        open_task_count = (
+            self._fetch_one(
+                """
+                SELECT COUNT(*) AS count
+                FROM entities
+                WHERE type IN ('task', 'todo', 'bug')
+                  AND COALESCE(status, 'active') NOT IN ('done', 'archived', 'deprecated')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM relationships mr
+                      WHERE mr.to_entity = entities.id AND mr.type = 'has_memory_area'
+                  )
+                """
+            )
+            or {"count": 0}
+        )["count"]
+
+        return _summary_envelope(
+            "project_state.v1",
+            {
+            "project": project,
+            "schema_version": self.get_schema_version(),
+            "fts_enabled": self._fts_enabled,
+            "counts": counts,
+            "open_task_count": open_task_count,
+            "entity_counts_by_type": self._fetch_all(
+                "SELECT type, COUNT(*) AS count FROM entities GROUP BY type ORDER BY count DESC, type ASC LIMIT ?",
+                (limit,),
+            ),
+            "memory_areas": memory_areas,
+            "recent_events": self._fetch_all(
+                "SELECT entity_id, event_type, created_at FROM events ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ),
+            },
+            compact=compact,
+        )
+
+    def get_open_tasks(self, limit: int = 25, offset: int = 0, compact: bool = False) -> dict[str, Any]:
+        limit = _bounded_limit(limit, maximum=100)
+        offset = _bounded_offset(offset)
+        total_count = (
+            self._fetch_one(
+                """
+                SELECT COUNT(*) AS count
+                FROM entities
+                WHERE type IN ('task', 'todo', 'bug')
+                  AND COALESCE(status, 'active') NOT IN ('done', 'archived', 'deprecated')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM relationships mr
+                      WHERE mr.to_entity = entities.id AND mr.type = 'has_memory_area'
+                  )
+                """
+            )
+            or {"count": 0}
+        )["count"]
+
+        items = self._fetch_all(
+            """
+            SELECT
+                e.id,
+                e.type,
+                e.name,
+                e.status,
+                e.updated_at,
+                MAX(CASE WHEN a.key = 'rank' THEN a.value END) AS rank,
+                MAX(CASE WHEN a.key = 'priority' THEN a.value END) AS priority,
+                MAX(CASE WHEN a.key = 'owner' THEN a.value END) AS owner,
+                SUM(CASE WHEN r.type = 'depends_on' AND r.from_entity = e.id THEN 1 ELSE 0 END) AS dependency_count,
+                SUM(CASE WHEN r.type = 'blocks' AND r.to_entity = e.id THEN 1 ELSE 0 END) AS blocker_count
+            FROM entities e
+            LEFT JOIN attributes a ON a.entity_id = e.id
+            LEFT JOIN relationships r ON r.from_entity = e.id OR r.to_entity = e.id
+            WHERE e.type IN ('task', 'todo', 'bug')
+              AND COALESCE(e.status, 'active') NOT IN ('done', 'archived', 'deprecated')
+                            AND NOT EXISTS (
+                                    SELECT 1 FROM relationships mr
+                                    WHERE mr.to_entity = e.id AND mr.type = 'has_memory_area'
+                            )
+            GROUP BY e.id, e.type, e.name, e.status, e.updated_at
+            ORDER BY
+                CASE
+                    WHEN MAX(CASE WHEN a.key = 'rank' THEN a.value END) GLOB '[0-9]*'
+                    THEN CAST(MAX(CASE WHEN a.key = 'rank' THEN a.value END) AS INTEGER)
+                    ELSE 9999
+                END,
+                CASE COALESCE(MAX(CASE WHEN a.key = 'priority' THEN a.value END), '')
+                    WHEN 'critical' THEN 1
+                    WHEN 'high' THEN 2
+                    WHEN 'medium' THEN 3
+                    WHEN 'low' THEN 4
+                    ELSE 5
+                END,
+                e.updated_at DESC,
+                e.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        return _summary_envelope(
+            "open_tasks.v1",
+            {
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(items) < total_count,
+            "items": items,
+            },
+            compact=compact,
+        )
+
+    def get_decision_log(self, limit: int = 25, offset: int = 0, compact: bool = False) -> dict[str, Any]:
+        limit = _bounded_limit(limit, maximum=100)
+        offset = _bounded_offset(offset)
+        total_count = (
+            self._fetch_one(
+                "SELECT COUNT(*) AS count FROM entities WHERE type IN ('decision', 'decision_log')"
+            )
+            or {"count": 0}
+        )["count"]
+        items = self._fetch_all(
+            """
+            SELECT
+                e.id,
+                e.type,
+                e.name,
+                e.status,
+                e.description,
+                e.updated_at,
+                (
+                    SELECT substr(c.body, 1, 240)
+                    FROM content c
+                    WHERE c.entity_id = e.id
+                      AND c.content_type IN ('reasoning', 'analysis', 'spec', 'note')
+                    ORDER BY c.created_at DESC, c.id DESC
+                    LIMIT 1
+                ) AS latest_note,
+                (
+                    SELECT c.created_at
+                    FROM content c
+                    WHERE c.entity_id = e.id
+                      AND c.content_type IN ('reasoning', 'analysis', 'spec', 'note')
+                    ORDER BY c.created_at DESC, c.id DESC
+                    LIMIT 1
+                ) AS latest_note_at
+            FROM entities e
+            WHERE e.type IN ('decision', 'decision_log')
+            ORDER BY e.updated_at DESC, e.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        return _summary_envelope(
+            "decision_log.v1",
+            {
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(items) < total_count,
+            "items": items,
+            },
+            compact=compact,
+        )
+
+    def get_architecture_summary(
+        self,
+        node_limit: int = 100,
+        relationship_limit: int = 150,
+        compact: bool = False,
+    ) -> dict[str, Any]:
+        node_limit = _bounded_limit(node_limit, maximum=250)
+        relationship_limit = _bounded_limit(relationship_limit, maximum=400)
+        nodes = self._fetch_all(
+            """
+            SELECT id, type, name, status, updated_at
+            FROM entities
+            WHERE type IN ('architecture', 'module', 'component', 'service', 'file')
+            ORDER BY type ASC, updated_at DESC, id ASC
+            LIMIT ?
+            """,
+            (node_limit,),
+        )
+        relationships = self._fetch_all(
+            """
+            SELECT from_entity, to_entity, type, created_at
+            FROM relationships
+            WHERE type IN ('depends_on', 'implements', 'calls', 'owns', 'contains')
+            ORDER BY created_at DESC, id ASC
+            LIMIT ?
+            """,
+            (relationship_limit,),
+        )
+        return _summary_envelope(
+            "architecture_summary.v1",
+            {
+            "node_count": (
+                self._fetch_one(
+                    "SELECT COUNT(*) AS count FROM entities WHERE type IN ('architecture', 'module', 'component', 'service', 'file')"
+                )
+                or {"count": 0}
+            )["count"],
+            "relationship_count": (
+                self._fetch_one(
+                    "SELECT COUNT(*) AS count FROM relationships WHERE type IN ('depends_on', 'implements', 'calls', 'owns', 'contains')"
+                )
+                or {"count": 0}
+            )["count"],
+            "node_types": self._fetch_all(
+                """
+                SELECT type, COUNT(*) AS count
+                FROM entities
+                WHERE type IN ('architecture', 'module', 'component', 'service', 'file')
+                GROUP BY type
+                ORDER BY count DESC, type ASC
+                """
+            ),
+            "relationship_types": self._fetch_all(
+                """
+                SELECT type, COUNT(*) AS count
+                FROM relationships
+                WHERE type IN ('depends_on', 'implements', 'calls', 'owns', 'contains')
+                GROUP BY type
+                ORDER BY count DESC, type ASC
+                """
+            ),
+            "nodes": nodes,
+            "relationships": relationships,
+            },
+            compact=compact,
+        )
+
+    def get_recent_reasoning(self, limit: int = 20, offset: int = 0, compact: bool = False) -> dict[str, Any]:
+        limit = _bounded_limit(limit, maximum=100)
+        offset = _bounded_offset(offset)
+        total_count = (
+            self._fetch_one("SELECT COUNT(*) AS count FROM content WHERE content_type = 'reasoning'")
+            or {"count": 0}
+        )["count"]
+        items = self._fetch_all(
+            """
+            SELECT
+                c.id,
+                c.entity_id,
+                e.type AS entity_type,
+                e.name AS entity_name,
+                substr(c.body, 1, 280) AS excerpt,
+                c.created_at
+            FROM content c
+            JOIN entities e ON e.id = c.entity_id
+            WHERE c.content_type = 'reasoning'
+            ORDER BY c.created_at DESC, c.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        return _summary_envelope(
+            "recent_reasoning.v1",
+            {
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(items) < total_count,
+            "items": items,
+            },
+            compact=compact,
+        )
+
+    def get_dependency_view(
+        self,
+        root_entity_id: str | None = None,
+        max_depth: int = 2,
+        relationship_types: list[str] | None = None,
+        limit: int = 200,
+        compact: bool = False,
+    ) -> dict[str, Any]:
+        selected_types = relationship_types or ["depends_on", "blocks"]
+        normalized_types = sorted({_validate_relationship_type(value) for value in selected_types})
+        max_depth = _bounded_limit(max_depth, maximum=8)
+        limit = _bounded_limit(limit, maximum=500)
+        placeholders = ", ".join("?" for _ in normalized_types)
+
+        if root_entity_id is None:
+            relationships = self._fetch_all(
+                f"""
+                SELECT r.id, r.from_entity, r.to_entity, r.type, r.created_at
+                FROM relationships r
+                WHERE r.type IN ({placeholders})
+                ORDER BY r.created_at DESC, r.id ASC
+                LIMIT ?
+                """,
+                tuple([*normalized_types, limit]),
+            )
+            node_ids = sorted(
+                {
+                    edge_id
+                    for relationship in relationships
+                    for edge_id in (relationship["from_entity"], relationship["to_entity"])
+                }
+            )
+            nodes = []
+            if node_ids:
+                node_placeholders = ", ".join("?" for _ in node_ids)
+                nodes = self._fetch_all(
+                    f"SELECT id, type, name, status FROM entities WHERE id IN ({node_placeholders}) ORDER BY type ASC, id ASC",
+                    tuple(node_ids),
+                )
+            return _summary_envelope(
+                "dependency_view.v1",
+                {
+                "root": None,
+                "depth": 1,
+                "relationship_types": normalized_types,
+                "node_count": len(nodes),
+                "relationship_count": len(relationships),
+                "nodes": nodes,
+                "relationships": relationships,
+                },
+                compact=compact,
+            )
+
+        root_entity_id = _validate_identifier(root_entity_id, "root entity id")
+        relationships = self._fetch_all(
+            f"""
+            WITH RECURSIVE graph(depth, id, from_entity, to_entity, type, created_at) AS (
+                SELECT 1, r.id, r.from_entity, r.to_entity, r.type, r.created_at
+                FROM relationships r
+                WHERE r.from_entity = ? AND r.type IN ({placeholders})
+
+                UNION ALL
+
+                SELECT graph.depth + 1, r.id, r.from_entity, r.to_entity, r.type, r.created_at
+                FROM relationships r
+                JOIN graph ON r.from_entity = graph.to_entity
+                WHERE graph.depth < ? AND r.type IN ({placeholders})
+            )
+            SELECT DISTINCT depth, id, from_entity, to_entity, type, created_at
+            FROM graph
+            ORDER BY depth ASC, created_at DESC, id ASC
+            LIMIT ?
+            """,
+            tuple([root_entity_id, *normalized_types, max_depth, *normalized_types, limit]),
+        )
+        node_ids = {root_entity_id}
+        for relationship in relationships:
+            node_ids.add(relationship["from_entity"])
+            node_ids.add(relationship["to_entity"])
+        node_placeholders = ", ".join("?" for _ in node_ids)
+        nodes = self._fetch_all(
+            f"SELECT id, type, name, status FROM entities WHERE id IN ({node_placeholders}) ORDER BY type ASC, id ASC",
+            tuple(sorted(node_ids)),
+        )
+        return _summary_envelope(
+            "dependency_view.v1",
+            {
+            "root": self.get_entity(root_entity_id, include_related=False),
+            "depth": max_depth,
+            "relationship_types": normalized_types,
+            "node_count": len(nodes),
+            "relationship_count": len(relationships),
+            "nodes": nodes,
+            "relationships": relationships,
+            },
+            compact=compact,
+        )
+
+    def export_json_snapshot(self) -> dict[str, Any]:
+        return {
+            "schema": "sqlite_project_memory_snapshot.v1",
+            "schema_version": self.get_schema_version(),
+            "tables": {
+                "entities": self._fetch_all("SELECT * FROM entities ORDER BY id"),
+                "attributes": self._fetch_all("SELECT * FROM attributes ORDER BY entity_id, key"),
+                "relationships": self._fetch_all("SELECT * FROM relationships ORDER BY id"),
+                "content": self._fetch_all("SELECT * FROM content ORDER BY id"),
+                "events": self._fetch_all("SELECT * FROM events ORDER BY id"),
+                "snapshots": self._fetch_all("SELECT * FROM snapshots ORDER BY id"),
+                "snapshot_entities": self._fetch_all(
+                    "SELECT * FROM snapshot_entities ORDER BY snapshot_id, entity_id"
+                ),
+                "tags": self._fetch_all("SELECT * FROM tags ORDER BY entity_id, tag"),
+                "schema_meta": self._fetch_all("SELECT * FROM schema_meta ORDER BY key"),
+            },
+        }
+
+    def import_json_snapshot(self, snapshot: dict[str, Any], replace: bool = True) -> dict[str, Any]:
+        if snapshot.get("schema") != "sqlite_project_memory_snapshot.v1":
+            raise ValidationError("snapshot schema must be 'sqlite_project_memory_snapshot.v1'")
+        tables = snapshot.get("tables")
+        if not isinstance(tables, dict):
+            raise ValidationError("snapshot.tables must be an object")
+
+        ordered_tables = [
+            "entities",
+            "attributes",
+            "relationships",
+            "content",
+            "events",
+            "snapshots",
+            "snapshot_entities",
+            "tags",
+            "schema_meta",
+        ]
+        for table_name in ordered_tables:
+            if table_name not in tables or not isinstance(tables[table_name], list):
+                raise ValidationError(f"snapshot.tables[{table_name!r}] must be a list")
+
+        with self._transaction() as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                if replace:
+                    for table_name in [
+                        "snapshot_entities",
+                        "tags",
+                        "events",
+                        "content",
+                        "relationships",
+                        "attributes",
+                        "snapshots",
+                        "entities",
+                        "schema_meta",
+                    ]:
+                        connection.execute(f"DELETE FROM {table_name}")
+
+                for row in tables["entities"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO entities (id, type, name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            row["id"],
+                            row["type"],
+                            row.get("name"),
+                            row.get("description"),
+                            row.get("status"),
+                            row.get("created_at"),
+                            row.get("updated_at"),
+                        ),
+                    )
+                for row in tables["attributes"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO attributes (entity_id, key, value) VALUES (?, ?, ?)",
+                        (row["entity_id"], row["key"], row["value"]),
+                    )
+                for row in tables["relationships"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO relationships (id, from_entity, to_entity, type, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (row["id"], row["from_entity"], row["to_entity"], row["type"], row.get("created_at")),
+                    )
+                for row in tables["content"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO content (id, entity_id, content_type, body, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (row["id"], row["entity_id"], row["content_type"], row["body"], row.get("created_at")),
+                    )
+                for row in tables["events"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO events (id, entity_id, event_type, data, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (row["id"], row.get("entity_id"), row["event_type"], row.get("data"), row.get("created_at")),
+                    )
+                for row in tables["snapshots"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO snapshots (id, name, description, created_at) VALUES (?, ?, ?, ?)",
+                        (row["id"], row["name"], row.get("description"), row.get("created_at")),
+                    )
+                for row in tables["snapshot_entities"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO snapshot_entities (snapshot_id, entity_id) VALUES (?, ?)",
+                        (row["snapshot_id"], row["entity_id"]),
+                    )
+                for row in tables["tags"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO tags (entity_id, tag) VALUES (?, ?)",
+                        (row["entity_id"], row["tag"]),
+                    )
+                for row in tables["schema_meta"]:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO schema_meta (key, value, updated_at) VALUES (?, ?, ?)",
+                        (row["key"], row["value"], row.get("updated_at")),
+                    )
+            finally:
+                connection.execute("PRAGMA foreign_keys = ON")
+
+        return {
+            "schema": snapshot["schema"],
+            "replace": replace,
+            "imported_counts": {table_name: len(tables[table_name]) for table_name in ordered_tables},
+        }
+
     def archive_entity(
         self,
         entity_id: str,
@@ -1812,7 +2350,33 @@ class DatabaseManager:
         if unsupported:
             raise ValidationError(f"unsupported view names: {', '.join(sorted(unsupported))}")
 
-        return {f"{view_name}.md": renderers[view_name]() for view_name in unique_requested}
+        generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return {
+            f"{view_name}.md": self._wrap_markdown_view(
+                view_name=view_name,
+                generated_at=generated_at,
+                body=renderers[view_name](),
+            )
+            for view_name in unique_requested
+        }
+
+    def _wrap_markdown_view(self, view_name: str, generated_at: str, body: str) -> str:
+        descriptions = {
+            "overview": "Generated project memory overview from the SQLite source of truth.",
+            "todo": "Generated task backlog grouped from the SQLite source of truth.",
+            "roadmap": "Generated roadmap summary derived from structured SQLite project memory.",
+            "architecture": "Generated architecture summary derived from structured SQLite project memory.",
+            "decisions": "Generated decision log derived from structured SQLite project memory.",
+            "plan": "Generated implementation plan derived from structured SQLite project memory.",
+            "notes": "Generated note and narrative summary derived from SQLite project memory.",
+        }
+        header_lines = [
+            "<!-- Generated file: do not edit manually. -->",
+            f"<!-- Description: {descriptions[view_name]} -->",
+            f"<!-- Generated at: {generated_at} -->",
+            "",
+        ]
+        return "\n".join(header_lines) + body.lstrip()
 
     def _render_overview_view(self) -> str:
         overview = self.get_project_overview()
@@ -1852,13 +2416,23 @@ class DatabaseManager:
                 e.name,
                 e.status,
                 e.updated_at,
+                MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS phase_number,
                 MAX(CASE WHEN a.key = 'priority' THEN a.value END) AS priority,
                 MAX(CASE WHEN a.key = 'owner' THEN a.value END) AS owner
             FROM entities e
             LEFT JOIN attributes a ON a.entity_id = e.id
             WHERE e.type IN ('task', 'todo', 'bug')
+              AND NOT EXISTS (
+                  SELECT 1 FROM relationships mr
+                  WHERE mr.to_entity = e.id AND mr.type = 'has_memory_area'
+              )
             GROUP BY e.id, e.name, e.status, e.updated_at
             ORDER BY
+                CASE
+                    WHEN MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) GLOB '[0-9]*'
+                    THEN CAST(MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS INTEGER)
+                    ELSE 9999
+                END,
                 CASE COALESCE(MAX(CASE WHEN a.key = 'priority' THEN a.value END), '')
                     WHEN 'critical' THEN 1
                     WHEN 'high' THEN 2
@@ -1875,36 +2449,149 @@ class DatabaseManager:
             lines.append("- No task-like entities recorded.")
             lines.append("")
             return "\n".join(lines)
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
         for task in tasks:
-            title = task["name"] or task["id"]
-            meta = [f"status={task['status'] or 'unknown'}"]
-            if task.get("priority"):
-                meta.append(f"priority={task['priority']}")
-            if task.get("owner"):
-                meta.append(f"owner={task['owner']}")
-            lines.append(f"- {title} ({', '.join(meta)})")
+            phase_number = task.get("phase_number") or "unassigned"
+            grouped.setdefault(phase_number, []).append(task)
+
+        sorted_phase_keys = sorted(
+            grouped,
+            key=lambda value: (9999 if not str(value).isdigit() else int(value), str(value)),
+        )
+        for phase_key in sorted_phase_keys:
+            if phase_key == "unassigned":
+                lines.append("## Unassigned")
+            else:
+                lines.append(f"## Phase {phase_key}")
+            lines.append("")
+            for task in grouped[phase_key]:
+                title = task["name"] or task["id"]
+                meta = [f"status={task['status'] or 'unknown'}"]
+                if task.get("priority"):
+                    meta.append(f"priority={task['priority']}")
+                if task.get("owner"):
+                    meta.append(f"owner={task['owner']}")
+                lines.append(f"- {title} ({', '.join(meta)})")
+            lines.append("")
         lines.append("")
         return "\n".join(lines)
 
     def _render_roadmap_view(self) -> str:
-        items = self._fetch_all(
+        roadmap_sections = [
+            ("Goal", "roadmap-section.goal"),
+            ("Current State", "roadmap-section.current-state"),
+            ("Design Constraints", "roadmap-section.design-constraints"),
+            ("Architectural Direction", "roadmap-section.architectural-direction"),
+            ("Completed Foundations", "roadmap-section.completed-foundations"),
+            ("Completed AI Read Models", "roadmap-section.completed-ai-read-models"),
+            ("Recommended Build Order", "roadmap-section.recommended-build-order"),
+            ("Definition Of Done", "roadmap-section.definition-of-done"),
+        ]
+        decisions = self._fetch_all(
             """
-            SELECT e.id, e.type, e.name, e.status, e.description, e.updated_at
+            SELECT e.id, e.name, e.status, e.description
             FROM entities e
-            WHERE e.type IN ('roadmap', 'milestone', 'feature', 'epic', 'release')
-               OR EXISTS (SELECT 1 FROM tags t WHERE t.entity_id = e.id AND t.tag = 'roadmap')
-            ORDER BY e.updated_at DESC, e.id ASC
+            WHERE e.type = 'decision'
+              AND EXISTS (SELECT 1 FROM tags t WHERE t.entity_id = e.id AND t.tag = 'open-decision')
+            ORDER BY e.name ASC, e.id ASC
+            """
+        )
+        phases = self._fetch_all(
+            """
+            SELECT
+                e.id,
+                e.type,
+                e.name,
+                e.status,
+                e.description,
+                e.updated_at,
+                MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS phase_number
+            FROM entities e
+            LEFT JOIN attributes a ON a.entity_id = e.id
+            WHERE e.type = 'phase'
+            GROUP BY e.id, e.type, e.name, e.status, e.description, e.updated_at
+            ORDER BY
+                CASE
+                    WHEN MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) GLOB '[0-9]*'
+                    THEN CAST(MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS INTEGER)
+                    ELSE 9999
+                END,
+                e.id ASC
             """
         )
         lines = ["# Roadmap", ""]
-        if not items:
+        if not phases and not decisions:
             lines.append("- No roadmap-style entities recorded.")
             lines.append("")
             return "\n".join(lines)
-        for item in items:
-            title = item["name"] or item["id"]
-            description = f": {item['description']}" if item.get("description") else ""
-            lines.append(f"- [{item['type']}] {title} ({item['status'] or 'unknown'}){description}")
+
+        for heading, content_id in roadmap_sections:
+            content = self._fetch_one(
+                "SELECT body FROM content WHERE id = ?",
+                (content_id,),
+            )
+            if not content or not content.get("body"):
+                continue
+            lines.append(f"## {heading}")
+            lines.append("")
+            lines.extend(content["body"].splitlines())
+            lines.append("")
+
+        if decisions:
+            lines.append("## Open Decisions")
+            lines.append("")
+            for decision in decisions:
+                title = decision["name"] or decision["id"]
+                description = f": {decision['description']}" if decision.get("description") else ""
+                lines.append(f"- {title} ({decision['status'] or 'unknown'}){description}")
+            lines.append("")
+
+        for phase in phases:
+            phase_number = phase.get("phase_number") or "?"
+            title = phase["name"] or phase["id"]
+            lines.append(f"## Phase {phase_number}: {title.split(': ', 1)[-1]}")
+            lines.append("")
+            lines.append(f"- Status: {phase['status'] or 'unknown'}")
+            if phase.get("description"):
+                lines.append(f"- Objective: {phase['description']}")
+
+            spec = self._fetch_one(
+                """
+                SELECT body
+                FROM content
+                WHERE entity_id = ? AND content_type = 'spec'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (phase["id"],),
+            )
+            if spec and spec.get("body"):
+                lines.append("- Acceptance Criteria:")
+                for item in spec["body"].splitlines():
+                    if item.strip():
+                        lines.append(f"  {item}")
+
+            tasks = self._fetch_all(
+                """
+                SELECT e.id, e.name, e.status, e.description
+                FROM relationships r
+                JOIN entities e ON e.id = r.to_entity
+                WHERE r.from_entity = ? AND r.type = 'contains' AND e.type = 'task'
+                ORDER BY e.name ASC, e.id ASC
+                """,
+                (phase["id"],),
+            )
+            lines.append("")
+            lines.append("### Tasks")
+            lines.append("")
+            if not tasks:
+                lines.append("- No tasks recorded.")
+            else:
+                for task in tasks:
+                    description = f": {task['description']}" if task.get("description") else ""
+                    lines.append(f"- {task['name'] or task['id']} ({task['status'] or 'unknown'}){description}")
+            lines.append("")
         lines.append("")
         return "\n".join(lines)
 
