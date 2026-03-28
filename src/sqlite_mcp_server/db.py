@@ -6,13 +6,38 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
 
 IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{1,127}$")
 ATTRIBUTE_KEY_RE = re.compile(r"^[a-z][a-z0-9._:-]{1,63}$")
 TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,63}$")
+SCHEMA_VERSION = 1
+ALLOWED_RELATIONSHIP_TYPES = {
+    "blocks",
+    "calls",
+    "contains",
+    "depends_on",
+    "documents",
+    "has_memory_area",
+    "implements",
+    "owned_by",
+    "owns",
+    "references",
+    "relates_to",
+    "tracks",
+}
+COMMON_STATUS_VOCABULARY = {
+    "*": {"active", "archived", "deprecated", "done", "draft", "pending"},
+    "task": {"active", "blocked", "done", "in_progress", "pending", "planned"},
+    "bug": {"active", "done", "investigating", "pending"},
+    "feature": {"active", "done", "planned", "proposed"},
+    "decision": {"accepted", "draft", "rejected", "superseded"},
+    "roadmap": {"active", "done", "planned"},
+}
+LOW_SIGNAL_ATTRIBUTE_VALUES = {"?", "n/a", "none", "temp", "tbd", "todo", "unknown"}
+RETENTION_CONTENT_TYPES = {"log", "reasoning"}
 
 
 class ValidationError(ValueError):
@@ -41,6 +66,17 @@ def _validate_tag(value: str) -> str:
     return value
 
 
+def _validate_relationship_type(value: str) -> str:
+    normalized = _validate_identifier(value, "relationship type")
+    if normalized in ALLOWED_RELATIONSHIP_TYPES or normalized.startswith("custom."):
+        return normalized
+    allowed = ", ".join(sorted(ALLOWED_RELATIONSHIP_TYPES))
+    raise ValidationError(
+        "relationship type must be one of the known types "
+        f"({allowed}) or use the 'custom.' namespace; got {value!r}."
+    )
+
+
 def _normalize_text(value: str | None) -> str | None:
     if value is None:
         return None
@@ -50,6 +86,16 @@ def _normalize_text(value: str | None) -> str | None:
 
 def _generated_id(prefix: str) -> str:
     return f"{prefix}.{uuid4().hex[:12]}"
+
+
+def _slugify(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", value.strip().lower())
+    normalized = normalized.strip("-")
+    return normalized[:64] or "item"
+
+
+def _normalized_name(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 
 class DatabaseManager:
@@ -75,7 +121,7 @@ class DatabaseManager:
             self._connection = None
 
     @contextmanager
-    def _transaction(self) -> sqlite3.Connection:
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
         if self._connection is None:
             raise RuntimeError("database connection has not been initialized")
 
@@ -158,6 +204,12 @@ class DatabaseManager:
             FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_entities_type_status ON entities(type, status);
         CREATE INDEX IF NOT EXISTS idx_entities_updated_at ON entities(updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_attributes_lookup ON attributes(key, value);
@@ -170,8 +222,52 @@ class DatabaseManager:
 
         with self._transaction() as connection:
             connection.executescript(base_schema)
+            self._initialize_schema_meta(connection)
 
         self._initialize_fts()
+
+    def _initialize_schema_meta(self, connection: sqlite3.Connection) -> None:
+        current_version = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if current_version is None:
+            connection.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            connection.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('schema_initialized_at', CURRENT_TIMESTAMP)"
+            )
+            return
+
+        stored_version = int(current_version[0])
+        if stored_version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"database schema version {stored_version} is newer than supported version {SCHEMA_VERSION}"
+            )
+        if stored_version < SCHEMA_VERSION:
+            self._apply_migrations(connection, stored_version, SCHEMA_VERSION)
+
+    def _apply_migrations(
+        self,
+        connection: sqlite3.Connection,
+        from_version: int,
+        to_version: int,
+    ) -> None:
+        migration_steps = {
+            1: [],
+        }
+
+        for target_version in range(from_version + 1, to_version + 1):
+            statements = migration_steps.get(target_version)
+            if statements is None:
+                raise RuntimeError(f"no migration path registered for schema version {target_version}")
+            for statement in statements:
+                connection.executescript(statement)
+            connection.execute(
+                "UPDATE schema_meta SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'schema_version'",
+                (str(target_version),),
+            )
 
     def _initialize_fts(self) -> None:
         fts_schema = """
@@ -216,6 +312,7 @@ class DatabaseManager:
         return {
             "database_path": str(self.db_path),
             "fts_enabled": self._fts_enabled,
+            "schema_version": self.get_schema_version(),
             "tables": {
                 "entities": "authoritative project objects such as tasks, files, modules, decisions, roadmap items",
                 "attributes": "flexible key/value metadata for entities",
@@ -230,8 +327,16 @@ class DatabaseManager:
                 "id_pattern": IDENTIFIER_RE.pattern,
                 "attribute_key_pattern": ATTRIBUTE_KEY_RE.pattern,
                 "tag_pattern": TAG_RE.pattern,
+                "allowed_relationship_types": sorted(ALLOWED_RELATIONSHIP_TYPES),
+                "custom_relationship_namespace": "custom.",
             },
         }
+
+    def get_schema_version(self) -> int:
+        row = self._fetch_one(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        )
+        return int(row["value"]) if row else SCHEMA_VERSION
 
     def _fetch_one(self, query: str, parameters: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         with self._lock:
@@ -269,6 +374,10 @@ class DatabaseManager:
     def _entity_exists(self, entity_id: str) -> bool:
         entity = self._fetch_one("SELECT id FROM entities WHERE id = ?", (entity_id,))
         return entity is not None
+
+    def _ensure_entity_exists(self, entity_id: str) -> None:
+        if not self._entity_exists(entity_id):
+            raise ValidationError(f"entity {entity_id!r} does not exist")
 
     def _get_relationship_by_edge(
         self,
@@ -598,7 +707,7 @@ class DatabaseManager:
         relationship_id = _validate_identifier(relationship_id, "relationship id")
         from_entity = _validate_identifier(from_entity, "from_entity")
         to_entity = _validate_identifier(to_entity, "to_entity")
-        relationship_type = _validate_identifier(relationship_type, "relationship type")
+        relationship_type = _validate_relationship_type(relationship_type)
 
         try:
             with self._transaction() as connection:
@@ -643,7 +752,7 @@ class DatabaseManager:
     ) -> dict[str, Any]:
         from_entity = _validate_identifier(from_entity, "from_entity")
         to_entity = _validate_identifier(to_entity, "to_entity")
-        relationship_type = _validate_identifier(relationship_type, "relationship type")
+        relationship_type = _validate_relationship_type(relationship_type)
 
         existing = self._get_relationship_by_edge(from_entity, to_entity, relationship_type)
         if existing is not None:
@@ -683,7 +792,7 @@ class DatabaseManager:
 
         if relationship_type:
             conditions.append("r.type = ?")
-            parameters.append(_validate_identifier(relationship_type, "relationship type"))
+            parameters.append(_validate_relationship_type(relationship_type))
 
         parameters.append(max(1, min(limit, 500)))
 
@@ -866,6 +975,7 @@ class DatabaseManager:
         return {
             "database_path": str(self.db_path),
             "fts_enabled": self._fts_enabled,
+            "schema_version": self.get_schema_version(),
             "entity_counts_by_type": self._fetch_all(
                 "SELECT type, COUNT(*) AS count FROM entities GROUP BY type ORDER BY count DESC, type ASC"
             ),
@@ -879,6 +989,658 @@ class DatabaseManager:
                 "SELECT id, entity_id, event_type, data, created_at FROM events ORDER BY created_at DESC, id DESC LIMIT 20"
             ),
             "snapshot_count": self._fetch_one("SELECT COUNT(*) AS count FROM snapshots") or {"count": 0},
+        }
+
+    def archive_entity(
+        self,
+        entity_id: str,
+        reason: str | None = None,
+        archived_status: str = "archived",
+    ) -> dict[str, Any]:
+        entity_id = _validate_identifier(entity_id, "entity id")
+        archived_status = _validate_identifier(archived_status, "archived status")
+        self._ensure_entity_exists(entity_id)
+
+        with self._transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE entities SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (archived_status, entity_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValidationError(f"entity {entity_id!r} does not exist")
+            self._record_event(
+                connection,
+                entity_id,
+                "entity.archived",
+                {"reason": _normalize_text(reason), "status": archived_status},
+            )
+
+        return self.get_entity(entity_id, include_related=True)
+
+    def delete_relationship(self, relationship_id: str) -> dict[str, Any]:
+        relationship_id = _validate_identifier(relationship_id, "relationship id")
+        relationship = self._fetch_one(
+            "SELECT * FROM relationships WHERE id = ?",
+            (relationship_id,),
+        )
+        if relationship is None:
+            raise ValidationError(f"relationship {relationship_id!r} does not exist")
+
+        with self._transaction() as connection:
+            connection.execute("DELETE FROM relationships WHERE id = ?", (relationship_id,))
+            self._touch_entity(connection, relationship["from_entity"])
+            self._touch_entity(connection, relationship["to_entity"])
+            self._record_event(
+                connection,
+                relationship["from_entity"],
+                "relationship.deleted",
+                {
+                    "relationship_id": relationship_id,
+                    "to": relationship["to_entity"],
+                    "type": relationship["type"],
+                },
+            )
+
+        return relationship
+
+    def _entity_dependency_counts(self, entity_id: str) -> dict[str, int]:
+        return {
+            "attributes": self._fetch_one(
+                "SELECT COUNT(*) AS count FROM attributes WHERE entity_id = ?",
+                (entity_id,),
+            )["count"],
+            "tags": self._fetch_one(
+                "SELECT COUNT(*) AS count FROM tags WHERE entity_id = ?",
+                (entity_id,),
+            )["count"],
+            "content": self._fetch_one(
+                "SELECT COUNT(*) AS count FROM content WHERE entity_id = ?",
+                (entity_id,),
+            )["count"],
+            "events": self._fetch_one(
+                "SELECT COUNT(*) AS count FROM events WHERE entity_id = ?",
+                (entity_id,),
+            )["count"],
+            "relationships_out": self._fetch_one(
+                "SELECT COUNT(*) AS count FROM relationships WHERE from_entity = ?",
+                (entity_id,),
+            )["count"],
+            "relationships_in": self._fetch_one(
+                "SELECT COUNT(*) AS count FROM relationships WHERE to_entity = ?",
+                (entity_id,),
+            )["count"],
+            "snapshots": self._fetch_one(
+                "SELECT COUNT(*) AS count FROM snapshot_entities WHERE entity_id = ?",
+                (entity_id,),
+            )["count"],
+        }
+
+    def delete_entity(self, entity_id: str, force: bool = False) -> dict[str, Any]:
+        entity_id = _validate_identifier(entity_id, "entity id")
+        entity = self.get_entity(entity_id, include_related=False)
+        dependency_counts = self._entity_dependency_counts(entity_id)
+
+        blockers = {
+            key: value
+            for key, value in dependency_counts.items()
+            if key in {"content", "relationships_out", "relationships_in", "snapshots"} and value > 0
+        }
+
+        if entity.get("status") != "archived" and not force:
+            raise ValidationError(
+                f"entity {entity_id!r} must be archived before deletion or deleted with force=True"
+            )
+        if blockers and not force:
+            raise ValidationError(
+                f"entity {entity_id!r} still has dependent records and cannot be deleted safely: {blockers}"
+            )
+
+        with self._transaction() as connection:
+            connection.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
+            self._record_event(
+                connection,
+                None,
+                "entity.deleted",
+                {
+                    "deleted_entity_id": entity_id,
+                    "deleted_entity_type": entity["type"],
+                    "force": force,
+                    "dependency_counts": dependency_counts,
+                },
+            )
+
+        return {
+            "deleted_entity": entity,
+            "dependency_counts": dependency_counts,
+            "force": force,
+        }
+
+    def merge_entities(
+        self,
+        source_entity_id: str,
+        target_entity_id: str,
+        attribute_conflict: str = "target_wins",
+    ) -> dict[str, Any]:
+        source_entity_id = _validate_identifier(source_entity_id, "source entity id")
+        target_entity_id = _validate_identifier(target_entity_id, "target entity id")
+        if source_entity_id == target_entity_id:
+            raise ValidationError("source and target entity ids must be different")
+        if attribute_conflict not in {"target_wins", "source_wins"}:
+            raise ValidationError("attribute_conflict must be one of: target_wins, source_wins")
+
+        source = self.get_entity(source_entity_id, include_related=False)
+        target = self.get_entity(target_entity_id, include_related=False)
+        if source["type"] != target["type"]:
+            raise ValidationError(
+                "merge requires matching entity types; "
+                f"got {source['type']!r} and {target['type']!r}"
+            )
+
+        merged_name = target.get("name") or source.get("name")
+        merged_description = target.get("description") or source.get("description")
+        merged_status = target.get("status") or source.get("status")
+
+        source_attributes = self._fetch_all(
+            "SELECT key, value FROM attributes WHERE entity_id = ?",
+            (source_entity_id,),
+        )
+        source_tags = self._fetch_all(
+            "SELECT tag FROM tags WHERE entity_id = ?",
+            (source_entity_id,),
+        )
+        outgoing = self._fetch_all(
+            "SELECT to_entity, type FROM relationships WHERE from_entity = ?",
+            (source_entity_id,),
+        )
+        incoming = self._fetch_all(
+            "SELECT from_entity, type FROM relationships WHERE to_entity = ?",
+            (source_entity_id,),
+        )
+
+        with self._transaction() as connection:
+            connection.execute(
+                "UPDATE entities SET name = ?, description = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (merged_name, merged_description, merged_status, target_entity_id),
+            )
+
+            if attribute_conflict == "target_wins":
+                connection.executemany(
+                    """
+                    INSERT INTO attributes (entity_id, key, value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(entity_id, key) DO NOTHING
+                    """,
+                    [(target_entity_id, row["key"], row["value"]) for row in source_attributes],
+                )
+            else:
+                connection.executemany(
+                    """
+                    INSERT INTO attributes (entity_id, key, value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(entity_id, key) DO UPDATE SET value = excluded.value
+                    """,
+                    [(target_entity_id, row["key"], row["value"]) for row in source_attributes],
+                )
+
+            if source_tags:
+                connection.executemany(
+                    "INSERT OR IGNORE INTO tags (entity_id, tag) VALUES (?, ?)",
+                    [(target_entity_id, row["tag"]) for row in source_tags],
+                )
+
+            connection.execute(
+                "UPDATE content SET entity_id = ? WHERE entity_id = ?",
+                (target_entity_id, source_entity_id),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO snapshot_entities (snapshot_id, entity_id) "
+                "SELECT snapshot_id, ? FROM snapshot_entities WHERE entity_id = ?",
+                (target_entity_id, source_entity_id),
+            )
+            connection.execute(
+                "DELETE FROM snapshot_entities WHERE entity_id = ?",
+                (source_entity_id,),
+            )
+            connection.execute(
+                "UPDATE events SET entity_id = ? WHERE entity_id = ?",
+                (target_entity_id, source_entity_id),
+            )
+
+            rewired_outgoing = 0
+            for row in outgoing:
+                if row["to_entity"] == target_entity_id:
+                    continue
+                connection.execute(
+                    "INSERT OR IGNORE INTO relationships (id, from_entity, to_entity, type) VALUES (?, ?, ?, ?)",
+                    (_generated_id("rel"), target_entity_id, row["to_entity"], row["type"]),
+                )
+                rewired_outgoing += 1
+
+            rewired_incoming = 0
+            for row in incoming:
+                if row["from_entity"] == target_entity_id:
+                    continue
+                connection.execute(
+                    "INSERT OR IGNORE INTO relationships (id, from_entity, to_entity, type) VALUES (?, ?, ?, ?)",
+                    (_generated_id("rel"), row["from_entity"], target_entity_id, row["type"]),
+                )
+                rewired_incoming += 1
+
+            connection.execute(
+                "DELETE FROM relationships WHERE from_entity = ? OR to_entity = ?",
+                (source_entity_id, source_entity_id),
+            )
+            connection.execute("DELETE FROM entities WHERE id = ?", (source_entity_id,))
+            self._touch_entity(connection, target_entity_id)
+            self._record_event(
+                connection,
+                target_entity_id,
+                "entity.merged",
+                {
+                    "source_entity_id": source_entity_id,
+                    "target_entity_id": target_entity_id,
+                    "attribute_conflict": attribute_conflict,
+                    "rewired_outgoing": rewired_outgoing,
+                    "rewired_incoming": rewired_incoming,
+                },
+            )
+
+        return self.get_entity(target_entity_id, include_related=True)
+
+    def find_similar_entities(
+        self,
+        name: str,
+        entity_type: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        normalized_name = _normalized_name(name)
+        if not normalized_name:
+            raise ValidationError("name must not be empty")
+
+        limit = max(1, min(limit, 25))
+        parameters: list[Any] = [f"%{normalized_name}%", f"%{normalized_name}%", f"%{normalized_name}%"]
+        type_clause = ""
+        if entity_type:
+            type_clause = "AND e.type = ?"
+            parameters.append(_validate_identifier(entity_type, "entity type"))
+
+        candidates = self._fetch_all(
+            f"""
+            SELECT
+                e.id,
+                e.type,
+                e.name,
+                e.description,
+                e.status,
+                e.updated_at
+            FROM entities e
+            WHERE (
+                LOWER(COALESCE(e.name, '')) LIKE ?
+                OR LOWER(e.id) LIKE ?
+                OR LOWER(COALESCE(e.description, '')) LIKE ?
+            )
+            {type_clause}
+            ORDER BY e.updated_at DESC, e.id ASC
+            LIMIT 100
+            """,
+            tuple(parameters),
+        )
+
+        scored: list[dict[str, Any]] = []
+        for candidate in candidates:
+            score = 0
+            candidate_name = _normalized_name(candidate.get("name"))
+            candidate_id = candidate["id"].lower()
+            if candidate_name == normalized_name:
+                score = 100
+            elif candidate_id == normalized_name:
+                score = 95
+            elif normalized_name in candidate_name:
+                score = 85
+            elif normalized_name.replace(" ", "-") in candidate_id:
+                score = 80
+            elif normalized_name in _normalized_name(candidate.get("description")):
+                score = 60
+
+            if score > 0:
+                enriched = dict(candidate)
+                enriched["match_score"] = score
+                scored.append(enriched)
+
+        scored.sort(key=lambda item: (-item["match_score"], item.get("name") or item["id"], item["id"]))
+        return scored[:limit]
+
+    def resolve_entity_by_name(
+        self,
+        name: str,
+        entity_type: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        candidates = self.find_similar_entities(name=name, entity_type=entity_type, limit=limit)
+        normalized_name = _normalized_name(name)
+        exact_matches = [
+            candidate
+            for candidate in candidates
+            if _normalized_name(candidate.get("name")) == normalized_name
+        ]
+
+        if len(exact_matches) == 1:
+            entity_id = exact_matches[0]["id"]
+            return {
+                "match_type": "exact",
+                "entity": self.get_entity(entity_id, include_related=True),
+                "candidates": candidates,
+            }
+
+        if len(exact_matches) > 1:
+            return {
+                "match_type": "ambiguous",
+                "entity": None,
+                "candidates": exact_matches,
+            }
+
+        if candidates:
+            return {
+                "match_type": "candidate",
+                "entity": None,
+                "candidates": candidates,
+            }
+
+        return {
+            "match_type": "none",
+            "entity": None,
+            "candidates": [],
+        }
+
+    def _generate_entity_id(self, entity_type: str, name: str) -> str:
+        base = f"{entity_type}.{_slugify(name)}"
+        candidate = base
+        suffix = 2
+        while self._entity_exists(candidate):
+            candidate = f"{base}.{suffix}"
+            suffix += 1
+        return candidate
+
+    def get_or_create_entity(
+        self,
+        entity_type: str,
+        name: str,
+        entity_id: str | None = None,
+        description: str | None = None,
+        status: str = "active",
+        attributes: dict[str, str] | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        entity_type = _validate_identifier(entity_type, "entity type")
+        normalized_name = _normalize_text(name)
+        if normalized_name is None:
+            raise ValidationError("name must not be empty")
+
+        resolution = self.resolve_entity_by_name(normalized_name, entity_type=entity_type)
+        if resolution["match_type"] == "exact":
+            return {
+                "created": False,
+                "match_type": "exact",
+                "entity": resolution["entity"],
+            }
+        if resolution["match_type"] == "ambiguous" and entity_id is None:
+            raise ValidationError(
+                "multiple exact-name entities already exist; provide an entity_id or merge duplicates before using get_or_create"
+            )
+
+        final_entity_id = _validate_identifier(entity_id, "entity id") if entity_id else self._generate_entity_id(entity_type, normalized_name)
+        entity = self.upsert_entity(
+            entity_id=final_entity_id,
+            entity_type=entity_type,
+            name=normalized_name,
+            description=description,
+            status=status,
+            attributes=attributes,
+            tags=tags,
+        )
+        return {
+            "created": True,
+            "match_type": resolution["match_type"],
+            "entity": entity,
+            "candidates": resolution["candidates"],
+        }
+
+    def get_database_health(self, limit: int = 25) -> dict[str, Any]:
+        limit = max(1, min(limit, 100))
+
+        duplicate_groups = self._fetch_all(
+            """
+            SELECT type, LOWER(TRIM(name)) AS normalized_name, COUNT(*) AS count
+            FROM entities
+            WHERE name IS NOT NULL AND TRIM(name) <> ''
+            GROUP BY type, LOWER(TRIM(name))
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, type ASC, normalized_name ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        duplicate_candidates = []
+        for group in duplicate_groups:
+            members = self._fetch_all(
+                """
+                SELECT id, type, name, status, updated_at
+                FROM entities
+                WHERE type = ? AND LOWER(TRIM(COALESCE(name, ''))) = ?
+                ORDER BY updated_at DESC, id ASC
+                """,
+                (group["type"], group["normalized_name"]),
+            )
+            duplicate_candidates.append(
+                {
+                    "type": group["type"],
+                    "normalized_name": group["normalized_name"],
+                    "count": group["count"],
+                    "entities": members,
+                }
+            )
+
+        invalid_statuses = []
+        for entity in self._fetch_all(
+            "SELECT id, type, name, status FROM entities WHERE status IS NOT NULL ORDER BY updated_at DESC, id ASC"
+        ):
+            allowed_statuses = COMMON_STATUS_VOCABULARY.get(entity["type"], COMMON_STATUS_VOCABULARY["*"])
+            if entity["status"] not in allowed_statuses:
+                invalid_statuses.append(
+                    {
+                        "id": entity["id"],
+                        "type": entity["type"],
+                        "name": entity["name"],
+                        "status": entity["status"],
+                        "allowed_statuses": sorted(allowed_statuses),
+                    }
+                )
+                if len(invalid_statuses) >= limit:
+                    break
+
+        malformed_entities = []
+        for entity in self._fetch_all("SELECT id, type, status FROM entities ORDER BY updated_at DESC, id ASC"):
+            issues = []
+            if not IDENTIFIER_RE.fullmatch(entity["id"]):
+                issues.append("invalid_entity_id")
+            if not IDENTIFIER_RE.fullmatch(entity["type"]):
+                issues.append("invalid_entity_type")
+            if entity["status"] and not IDENTIFIER_RE.fullmatch(entity["status"]):
+                issues.append("invalid_status")
+            if issues:
+                malformed_entities.append({"id": entity["id"], "issues": issues})
+                if len(malformed_entities) >= limit:
+                    break
+
+        low_quality_attributes = self._fetch_all(
+            """
+            SELECT entity_id, key, value
+            FROM attributes
+            WHERE LOWER(TRIM(value)) IN ('?', 'n/a', 'none', 'temp', 'tbd', 'todo', 'unknown')
+            ORDER BY entity_id ASC, key ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+
+        broken_references = {
+            "content": self._fetch_all(
+                """
+                SELECT c.id, c.entity_id
+                FROM content c
+                LEFT JOIN entities e ON e.id = c.entity_id
+                WHERE e.id IS NULL
+                LIMIT ?
+                """,
+                (limit,),
+            ),
+            "tags": self._fetch_all(
+                """
+                SELECT t.entity_id, t.tag
+                FROM tags t
+                LEFT JOIN entities e ON e.id = t.entity_id
+                WHERE e.id IS NULL
+                LIMIT ?
+                """,
+                (limit,),
+            ),
+            "relationships": self._fetch_all(
+                """
+                SELECT r.id, r.from_entity, r.to_entity, r.type
+                FROM relationships r
+                LEFT JOIN entities ef ON ef.id = r.from_entity
+                LEFT JOIN entities et ON et.id = r.to_entity
+                WHERE ef.id IS NULL OR et.id IS NULL
+                LIMIT ?
+                """,
+                (limit,),
+            ),
+        }
+
+        high_volume_content = self._fetch_all(
+            """
+            SELECT entity_id, content_type, COUNT(*) AS count
+            FROM content
+            WHERE content_type IN ('log', 'reasoning')
+            GROUP BY entity_id, content_type
+            HAVING COUNT(*) > 20
+            ORDER BY count DESC, entity_id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+
+        issue_counts = {
+            "duplicate_candidates": len(duplicate_candidates),
+            "invalid_statuses": len(invalid_statuses),
+            "malformed_entities": len(malformed_entities),
+            "low_quality_attributes": len(low_quality_attributes),
+            "broken_content_references": len(broken_references["content"]),
+            "broken_tag_references": len(broken_references["tags"]),
+            "broken_relationship_references": len(broken_references["relationships"]),
+            "high_volume_content": len(high_volume_content),
+        }
+
+        return {
+            "healthy": all(count == 0 for count in issue_counts.values()),
+            "issue_counts": issue_counts,
+            "duplicate_candidates": duplicate_candidates,
+            "invalid_statuses": invalid_statuses,
+            "malformed_entities": malformed_entities,
+            "low_quality_attributes": low_quality_attributes,
+            "broken_references": broken_references,
+            "high_volume_content": high_volume_content,
+            "retention_policy": {
+                "content_types": sorted(RETENTION_CONTENT_TYPES),
+                "recommended_keep_latest": 20,
+            },
+        }
+
+    def prune_content_retention(
+        self,
+        content_types: list[str] | None = None,
+        keep_latest: int = 20,
+        entity_id: str | None = None,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        keep_latest = max(1, min(keep_latest, 500))
+        selected_types = sorted(
+            {
+                _validate_identifier(content_type, "content type")
+                for content_type in (content_types or sorted(RETENTION_CONTENT_TYPES))
+            }
+        )
+        if not selected_types:
+            raise ValidationError("at least one content type must be provided")
+
+        entity_clause = ""
+        parameters: list[Any] = [*selected_types, keep_latest]
+        if entity_id is not None:
+            normalized_entity_id = _validate_identifier(entity_id, "entity id")
+            entity_clause = "AND entity_id = ?"
+            parameters.append(normalized_entity_id)
+
+        placeholders = ", ".join("?" for _ in selected_types)
+        candidates = self._fetch_all(
+            f"""
+            SELECT id, entity_id, content_type, created_at
+            FROM (
+                SELECT
+                    id,
+                    entity_id,
+                    content_type,
+                    created_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY entity_id, content_type
+                        ORDER BY created_at DESC, id DESC
+                    ) AS row_number
+                FROM content
+                WHERE content_type IN ({placeholders})
+                {entity_clause}
+            ) ranked
+            WHERE row_number > ?
+            ORDER BY entity_id ASC, content_type ASC, created_at DESC, id DESC
+            """,
+            tuple(parameters),
+        )
+
+        if dry_run or not candidates:
+            return {
+                "dry_run": dry_run,
+                "keep_latest": keep_latest,
+                "content_types": selected_types,
+                "entity_id": entity_id,
+                "delete_count": len(candidates),
+                "candidates": candidates,
+            }
+
+        deleted_ids = [candidate["id"] for candidate in candidates]
+        entities_touched = sorted({candidate["entity_id"] for candidate in candidates})
+        with self._transaction() as connection:
+            connection.executemany(
+                "DELETE FROM content WHERE id = ?",
+                [(content_id,) for content_id in deleted_ids],
+            )
+            for touched_entity_id in entities_touched:
+                self._touch_entity(connection, touched_entity_id)
+                self._record_event(
+                    connection,
+                    touched_entity_id,
+                    "content.pruned",
+                    {
+                        "content_types": selected_types,
+                        "keep_latest": keep_latest,
+                    },
+                )
+
+        return {
+            "dry_run": False,
+            "keep_latest": keep_latest,
+            "content_types": selected_types,
+            "entity_id": entity_id,
+            "delete_count": len(candidates),
+            "deleted_content_ids": deleted_ids,
+            "entities_touched": entities_touched,
         }
 
     def get_recent_activity(self, limit: int = 20) -> dict[str, Any]:
@@ -1275,7 +2037,7 @@ class DatabaseManager:
         max_depth = max(1, min(max_depth, 8))
 
         if relationship_type:
-            relationship_type = _validate_identifier(relationship_type, "relationship type")
+            relationship_type = _validate_relationship_type(relationship_type)
             type_clause = "AND r.type = ?"
             parameters: tuple[Any, ...] = (entity_id, relationship_type, max_depth)
         else:

@@ -47,6 +47,9 @@ The server also creates an FTS5 index for `content.body` when available.
 - `update_entity`
 - `get_entity`
 - `list_entities`
+- `find_similar_entities`
+- `resolve_entity_by_name`
+- `get_or_create_entity`
 - `upsert_attributes`
 - `set_tags`
 - `add_relationship`
@@ -59,6 +62,8 @@ The server also creates an FTS5 index for `content.body` when available.
 - `get_snapshot`
 - `get_project_overview`
 - `get_recent_activity`
+- `get_database_health`
+- `prune_content_retention`
 - `get_entity_graph`
 - `bootstrap_project_memory`
 - `run_read_query`
@@ -141,6 +146,14 @@ The intended pattern is:
 2. Use `run_read_query` only for read-only inspection.
 3. Generate markdown views only when a person or downstream tool needs a document.
 4. Keep SQLite authoritative.
+
+For long-running AI usage, the hygiene tools matter as much as the write tools:
+
+- `find_similar_entities` helps avoid creating duplicate memory objects.
+- `resolve_entity_by_name` lets the AI reuse existing entities when a human-style name is all it has.
+- `get_or_create_entity` gives the AI a safer name-first workflow with stable id generation.
+- `get_database_health` reports duplicate candidates, invalid statuses, low-signal attributes, and retention pressure.
+- `prune_content_retention` provides a controlled cleanup path for high-volume `reasoning` and `log` content.
 
 ## Suggested Modeling Conventions
 

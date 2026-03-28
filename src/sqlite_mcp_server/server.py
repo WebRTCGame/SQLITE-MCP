@@ -142,6 +142,49 @@ def update_entity(
 
 
 @mcp.tool()
+def archive_entity(
+    entity_id: str,
+    reason: str | None = None,
+    archived_status: str = "archived",
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Archive an entity without deleting its history or related project memory."""
+    assert ctx is not None
+    return _db(ctx).archive_entity(
+        entity_id=entity_id,
+        reason=reason,
+        archived_status=archived_status,
+    )
+
+
+@mcp.tool()
+def delete_entity(
+    entity_id: str,
+    force: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Delete an entity with guardrails; non-forced deletion requires prior archiving and no critical dependents."""
+    assert ctx is not None
+    return _db(ctx).delete_entity(entity_id=entity_id, force=force)
+
+
+@mcp.tool()
+def merge_entities(
+    source_entity_id: str,
+    target_entity_id: str,
+    attribute_conflict: str = "target_wins",
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Merge a duplicate source entity into a target entity with deterministic conflict handling."""
+    assert ctx is not None
+    return _db(ctx).merge_entities(
+        source_entity_id=source_entity_id,
+        target_entity_id=target_entity_id,
+        attribute_conflict=attribute_conflict,
+    )
+
+
+@mcp.tool()
 def get_entity(entity_id: str, include_related: bool = True, ctx: Context | None = None) -> dict[str, Any]:
     """Fetch an entity and optionally include related metadata, content, and events."""
     assert ctx is not None
@@ -169,6 +212,54 @@ def list_entities(
         tag=tag,
         search=search,
         limit=limit,
+    )
+
+
+@mcp.tool()
+def find_similar_entities(
+    name: str,
+    entity_type: str | None = None,
+    limit: int = 10,
+    ctx: Context | None = None,
+) -> list[dict[str, Any]]:
+    """Find likely duplicate or related entities before creating a new one."""
+    assert ctx is not None
+    return _db(ctx).find_similar_entities(name=name, entity_type=entity_type, limit=limit)
+
+
+@mcp.tool()
+def resolve_entity_by_name(
+    name: str,
+    entity_type: str | None = None,
+    limit: int = 10,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Resolve a human-readable name to an existing entity when possible."""
+    assert ctx is not None
+    return _db(ctx).resolve_entity_by_name(name=name, entity_type=entity_type, limit=limit)
+
+
+@mcp.tool()
+def get_or_create_entity(
+    entity_type: str,
+    name: str,
+    entity_id: str | None = None,
+    description: str | None = None,
+    status: str = "active",
+    attributes: dict[str, str] | None = None,
+    tags: list[str] | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Reuse an exact entity when it already exists or create one with a generated stable id."""
+    assert ctx is not None
+    return _db(ctx).get_or_create_entity(
+        entity_type=entity_type,
+        name=name,
+        entity_id=entity_id,
+        description=description,
+        status=status,
+        attributes=attributes,
+        tags=tags,
     )
 
 
@@ -230,6 +321,13 @@ def connect_entities(
         relationship_type=relationship_type,
         relationship_id=relationship_id,
     )
+
+
+@mcp.tool()
+def delete_relationship(relationship_id: str, ctx: Context | None = None) -> dict[str, Any]:
+    """Delete a relationship by id and record the removal in project history."""
+    assert ctx is not None
+    return _db(ctx).delete_relationship(relationship_id=relationship_id)
 
 
 @mcp.tool()
@@ -330,6 +428,31 @@ def get_recent_activity(limit: int = 20, ctx: Context | None = None) -> dict[str
     """Return recent entities, content, and events to help an AI resume context quickly."""
     assert ctx is not None
     return _db(ctx).get_recent_activity(limit=limit)
+
+
+@mcp.tool()
+def get_database_health(limit: int = 25, ctx: Context | None = None) -> dict[str, Any]:
+    """Report likely duplicates, low-quality records, and retention pressure in project memory."""
+    assert ctx is not None
+    return _db(ctx).get_database_health(limit=limit)
+
+
+@mcp.tool()
+def prune_content_retention(
+    content_types: list[str] | None = None,
+    keep_latest: int = 20,
+    entity_id: str | None = None,
+    dry_run: bool = True,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Prune older reasoning/log content while keeping the most recent records per entity and type."""
+    assert ctx is not None
+    return _db(ctx).prune_content_retention(
+        content_types=content_types,
+        keep_latest=keep_latest,
+        entity_id=entity_id,
+        dry_run=dry_run,
+    )
 
 
 @mcp.tool()

@@ -10,6 +10,8 @@ The target state is:
 - Markdown files are generated views, not primary storage.
 - The AI uses explicit MCP verbs for most writes.
 - Raw SQL is limited to read-only inspection and reporting.
+- The MCP contract is optimized before the storage encoding is optimized.
+- Tool outputs are compact, structured, and predictable for machine consumption.
 - The database remains clean enough to be useful over long periods of repeated AI interaction.
 
 ## Current State
@@ -19,7 +21,9 @@ Already implemented:
 - Generic graph-friendly schema built around `entities`, `attributes`, `relationships`, `content`, `events`, `snapshots`, `snapshot_entities`, and `tags`.
 - AI-oriented MCP tools for idempotent entity writes, relationship creation, narrative content, project bootstrap, read-only SQL, recent activity, and markdown view generation/export.
 - Basic validation for ids, types, keys, and duplicate relationships.
-- Basic tests covering the DB layer and generated markdown behavior.
+- Lifecycle tools for archive, delete, merge, schema version tracking, and relationship-type guardrails.
+- AI-hygiene tools for duplicate detection, name resolution, get-or-create flows, health reporting, and retention pruning.
+- Tests covering the DB layer, lifecycle behavior, and generated markdown behavior.
 
 This means the project is already usable as a prototype. The remaining work is to make it durable, safe, testable, and operationally practical.
 
@@ -33,48 +37,30 @@ These constraints should continue to guide every change:
 - Narrative is separate from structure.
 - Generated documents are outputs, not storage.
 - The AI should not depend on generic write SQL for normal operation.
+- Optimize the MCP tool contract before inventing a new storage language.
+- Prefer compact structured JSON over prose when returning machine-facing state.
+- Keep prose only where narrative memory is actually needed.
+- Treat embeddings or vector search as optional augmentation, not the source of truth.
 
-## Phase 1: Close Core Gaps
+## Architectural Direction
 
-Objective: finish the missing lifecycle and schema-control pieces so the memory store does not only grow forever.
+The recent design discussion changes the priority order slightly:
 
-Tasks:
+- The main optimization target is the MCP interface, because the AI reads tool outputs rather than raw SQLite pages.
+- Token efficiency should come primarily from compact response shapes, summary-first tools, and fewer unnecessary round trips.
+- The relational graph schema remains the correct authority layer.
+- A custom symbolic language or alternate storage notation is not currently justified.
+- If further optimization is needed later, start with controlled vocabularies, short stable codes, and response compaction before redesigning storage.
 
-- Add `archive_entity` tool and supporting DB behavior.
-- Add `delete_entity` tool with safety checks.
-- Add `delete_relationship` tool.
-- Add `merge_entities` tool for duplicate cleanup.
-- Add explicit schema version tracking.
-- Add migration handling for future schema changes.
-- Add stronger validation for entity ids, attribute keys, and relationship types.
+## Completed Foundations
 
-Acceptance criteria:
+Already implemented:
 
-- Entities can be archived without being physically deleted.
-- Dangerous deletes require strict validation and do not silently orphan data.
-- Duplicate entities can be merged with deterministic behavior.
-- The database exposes a schema version and can safely evolve.
-- Relationship creation is restricted to known or validated relationship types.
+- Lifecycle tools for archive, delete, merge, schema version tracking, and relationship-type guardrails.
+- AI-hygiene tools for duplicate detection, name resolution, get-or-create flows, health reporting, and retention pruning.
+- DB-layer tests covering storage behavior, lifecycle behavior, and generated markdown behavior.
 
-## Phase 2: AI Hygiene And Memory Quality
-
-Objective: make the system resilient to frequent AI usage patterns that would otherwise degrade memory quality.
-
-Tasks:
-
-- Add `find_similar_entities` to detect likely duplicates before creation.
-- Add `resolve_entity_by_name` or `get_or_create_entity` helper flow.
-- Add orphan detection for content, tags, and relationships.
-- Add duplicate and low-quality attribute detection.
-- Add retention or summarization rules for high-volume narrative types such as `reasoning` and `log`.
-- Add consistency checks for malformed ids, invalid statuses, and broken references.
-
-Acceptance criteria:
-
-- The AI can resolve likely existing entities before creating new ones.
-- The server can report duplicate candidates and orphans.
-- Long-running usage does not create unbounded low-value reasoning noise without a cleanup path.
-- A database health check can identify major hygiene issues.
+These are no longer the primary remaining gaps. The remaining roadmap starts from the next unfinished layers.
 
 ## Phase 3: Higher-Level AI Read Models
 
@@ -88,14 +74,36 @@ Tasks:
 - Add `get_architecture_summary` summary.
 - Add `get_recent_reasoning` summary.
 - Add `get_dependency_view` summary for graph-oriented inspection.
+- Make these responses compact and deterministic, with stable field names and minimal narrative filler.
+- Add pagination and explicit limits where any summary can grow large.
 
 Acceptance criteria:
 
 - A fresh AI session can recover meaningful project context with a small number of tool calls.
 - The most common planning and status questions can be answered without custom SQL.
 - Summaries return stable, predictable shapes suitable for repeated machine consumption.
+- High-frequency queries avoid verbose prose and unnecessary repeated fields.
 
-## Phase 4: Document View System
+## Phase 4: Compact Contracts And Controlled Vocabularies
+
+Objective: improve AI efficiency without redesigning the storage model.
+
+Tasks:
+
+- Define stable response schemas for all high-frequency MCP tools.
+- Add compact response modes where large or repetitive payloads are expected.
+- Introduce controlled vocabularies or short stable codes for relationship types, statuses, and common entity classifications.
+- Decide whether relationship types should be backed by a registry table rather than hard-coded conventions alone.
+- Add response-size safeguards so large queries fail predictably or paginate instead of returning oversized payloads.
+- Keep prose fields optional in machine-facing reads unless explicitly requested.
+
+Acceptance criteria:
+
+- The AI can complete common workflows with fewer tool calls and fewer tokens.
+- Tool outputs remain easy to validate programmatically.
+- No custom symbolic storage language is required to achieve practical efficiency gains.
+
+## Phase 5: Document View System
 
 Objective: make generated markdown views genuinely useful for humans while keeping the DB authoritative.
 
@@ -115,16 +123,15 @@ Acceptance criteria:
 - Regenerating views does not mutate authoritative project state.
 - The current roadmap file can eventually be generated from DB state instead of maintained manually.
 
-## Phase 5: Testing And Validation
+## Phase 6: Testing And Validation
 
 Objective: move from basic validation to confidence that the MCP surface itself is safe to rely on.
 
 Tasks:
 
-- Expand unit tests for archive, delete, merge, migration, and validation rules.
 - Add integration tests against the actual FastMCP tool layer.
 - Add acceptance tests that bootstrap a project and walk through a realistic AI workflow.
-- Add regression tests for duplicate edges, invalid ids, invalid relationship types, and markdown export behavior.
+- Add regression tests for compact response contracts, duplicate edges, invalid ids, invalid relationship types, and markdown export behavior.
 - Add large-content and pagination tests where relevant.
 
 Acceptance criteria:
@@ -134,7 +141,7 @@ Acceptance criteria:
 - A realistic end-to-end project-memory scenario passes reliably.
 - Common failure modes are protected by regression tests.
 
-## Phase 6: Client And Operator Experience
+## Phase 7: Client And Operator Experience
 
 Objective: make the server easy to run, wire up, inspect, and maintain.
 
@@ -154,18 +161,33 @@ Acceptance criteria:
 - The system provides enough telemetry to debug frequent AI usage.
 - Project memory can be backed up and restored cleanly.
 
+## Phase 8: Optional Semantic Retrieval
+
+Objective: add fuzzy recall only after the core relational and MCP contract layers are stable.
+
+Tasks:
+
+- Evaluate whether embeddings materially improve retrieval quality for real project-memory workloads.
+- If they do, add an optional embeddings or vector-search layer that augments, but does not replace, the relational source of truth.
+- Define clear rules for which entity or content types should be embedded.
+- Add tooling to rebuild embeddings after significant content changes.
+
+Acceptance criteria:
+
+- Semantic retrieval improves recall for ambiguous or fuzzy queries.
+- Core project state remains queryable without any vector dependency.
+- The system remains debuggable when embeddings are absent or stale.
+
 ## Recommended Build Order
 
 If the goal is to finish this efficiently, do the work in this order:
 
-1. Lifecycle tools: archive, delete, merge.
-2. Schema versioning and migrations.
-3. Stronger validation and relationship conventions.
-4. AI hygiene and duplicate-detection helpers.
-5. MCP-layer integration tests.
-6. Higher-level summary tools.
-7. Better markdown views and export workflow.
-8. Client configuration, CLI/admin tooling, backup/restore, and observability.
+1. Higher-level summary tools with compact, stable response shapes.
+2. Controlled vocabularies and compact contract work.
+3. MCP-layer integration tests.
+4. Better markdown views and export workflow.
+5. Client configuration, CLI/admin tooling, backup/restore, and observability.
+6. Optional semantic retrieval only if real usage justifies it.
 
 ## Open Decisions
 
@@ -173,10 +195,13 @@ These need to be settled before the MCP can be considered complete:
 
 - Canonical entity id format.
 - Allowed relationship types and their semantics.
+- Whether relationship types should have a registry table and short stable codes.
 - Attribute namespace rules.
 - Status vocabulary for common entity types.
+- Whether high-frequency read tools should expose a compact mode by default.
 - Retention policy for `reasoning` and `log` content.
 - Whether markdown views are generated on demand only or also auto-synced.
+- Whether embeddings are worth the added operational complexity for this project.
 
 ## Definition Of Done
 
@@ -185,6 +210,7 @@ This MCP should be considered finished when all of the following are true:
 - The AI can create, update, connect, summarize, archive, merge, and inspect project memory without relying on generic write SQL.
 - The schema can evolve safely through versioned migrations.
 - Long-term AI usage does not rapidly corrupt memory quality through duplicate or low-value records.
+- High-frequency MCP responses are compact, structured, and stable enough for repeated machine consumption.
 - Generated markdown views are useful outputs but clearly secondary to the database.
 - The MCP layer is covered by tests and can be configured in a real client with documented steps.
 - Operators can back up, restore, inspect, and validate the system without custom scripts.
