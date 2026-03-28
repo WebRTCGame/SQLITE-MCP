@@ -40,6 +40,23 @@ COMMON_STATUS_VOCABULARY = {
 }
 LOW_SIGNAL_ATTRIBUTE_VALUES = {"?", "n/a", "none", "temp", "tbd", "todo", "unknown"}
 RETENTION_CONTENT_TYPES = {"log", "reasoning"}
+RETAIN_LATEST_CONTENT_COUNT = 20
+COMMON_ATTRIBUTE_KEYS = {
+    "language",
+    "memory_model",
+    "owner",
+    "path",
+    "phase_number",
+    "priority",
+    "rank",
+    "source",
+    "source_kind",
+    "source_of_truth",
+    "source_path",
+    "source_sync_at",
+    "task_order",
+}
+RECOMMENDED_ATTRIBUTE_NAMESPACES = ["client.", "meta.", "source.", "trace.", "ui."]
 DOCUMENT_TARGETS = {
     "architecture": {
         "entity_type": "architecture",
@@ -372,6 +389,55 @@ class DatabaseManager:
                 "tag_pattern": TAG_RE.pattern,
                 "allowed_relationship_types": sorted(ALLOWED_RELATIONSHIP_TYPES),
                 "custom_relationship_namespace": "custom.",
+            },
+            "policy": {
+                "entity_id": {
+                    "generated_format": "<entity_type>.<slug>[.<n>]",
+                    "generated_example": "task.add-health-checks",
+                    "guidance": "Prefer stable ids that start with the owning entity type. Project memory-area anchors may also use project-scoped ids such as project.sqlite-mcp.roadmap.",
+                },
+                "relationships": {
+                    "registry_table": False,
+                    "built_in_types": sorted(ALLOWED_RELATIONSHIP_TYPES),
+                    "extension_policy": "Use built-in relationship types when possible; use the custom. namespace for project-specific edges instead of maintaining a registry table.",
+                },
+                "attributes": {
+                    "common_keys": sorted(COMMON_ATTRIBUTE_KEYS),
+                    "custom_key_policy": "Use lowercase dotted namespaces for non-common keys.",
+                    "recommended_namespaces": RECOMMENDED_ATTRIBUTE_NAMESPACES,
+                },
+                "statuses": {
+                    "common_vocabulary": {key: list(values) for key, values in COMMON_STATUS_VOCABULARY.items()},
+                    "fallback_policy": "Other entity types may use stable identifier-style statuses.",
+                },
+                "retention": {
+                    "content_types": sorted(RETENTION_CONTENT_TYPES),
+                    "keep_latest": RETAIN_LATEST_CONTENT_COUNT,
+                    "prune_default": "manual_dry_run",
+                },
+                "markdown_views": {
+                    "generation_policy": "on_demand_only",
+                    "authoritative_source": "sqlite",
+                },
+                "mcp_read_defaults": {
+                    "compact": True,
+                    "tools": [
+                        "get_project_state",
+                        "get_open_tasks",
+                        "get_decision_log",
+                        "get_architecture_summary",
+                        "get_recent_reasoning",
+                        "get_dependency_view",
+                        "get_recent_activity",
+                        "get_entity_graph",
+                    ],
+                    "opt_out": "Pass compact=false when a fuller response is needed.",
+                },
+                "semantic_retrieval": {
+                    "default_strategy": "fts5_plus_structured_reads",
+                    "embeddings_enabled": False,
+                    "adoption_threshold": "Only add embeddings after a concrete retrieval gap is observed that FTS5 and existing summary/read models cannot cover.",
+                },
             },
         }
 
@@ -2044,6 +2110,18 @@ class DatabaseManager:
             (limit,),
         )
 
+        attribute_namespace_issues = self._fetch_all(
+            f"""
+            SELECT entity_id, key, value
+            FROM attributes
+            WHERE instr(key, '.') = 0
+              AND key NOT IN ({", ".join('?' for _ in sorted(COMMON_ATTRIBUTE_KEYS))})
+            ORDER BY entity_id ASC, key ASC
+            LIMIT ?
+            """,
+            (*sorted(COMMON_ATTRIBUTE_KEYS), limit),
+        )
+
         broken_references = {
             "content": self._fetch_all(
                 """
@@ -2096,6 +2174,7 @@ class DatabaseManager:
             "invalid_statuses": len(invalid_statuses),
             "malformed_entities": len(malformed_entities),
             "low_quality_attributes": len(low_quality_attributes),
+            "attribute_namespace_issues": len(attribute_namespace_issues),
             "broken_content_references": len(broken_references["content"]),
             "broken_tag_references": len(broken_references["tags"]),
             "broken_relationship_references": len(broken_references["relationships"]),
@@ -2109,11 +2188,12 @@ class DatabaseManager:
             "invalid_statuses": invalid_statuses,
             "malformed_entities": malformed_entities,
             "low_quality_attributes": low_quality_attributes,
+            "attribute_namespace_issues": attribute_namespace_issues,
             "broken_references": broken_references,
             "high_volume_content": high_volume_content,
             "retention_policy": {
                 "content_types": sorted(RETENTION_CONTENT_TYPES),
-                "recommended_keep_latest": 20,
+                "recommended_keep_latest": RETAIN_LATEST_CONTENT_COUNT,
             },
         }
 

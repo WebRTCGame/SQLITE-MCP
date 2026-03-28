@@ -198,6 +198,16 @@ def test_schema_overview_reports_schema_version_and_relationship_policy(db: Data
     assert overview["schema_version"] >= 1
     assert "depends_on" in overview["validation"]["allowed_relationship_types"]
     assert overview["validation"]["custom_relationship_namespace"] == "custom."
+    assert overview["policy"]["entity_id"]["generated_format"] == "<entity_type>.<slug>[.<n>]"
+    assert overview["policy"]["relationships"]["registry_table"] is False
+    assert "priority" in overview["policy"]["attributes"]["common_keys"]
+    assert "task" in overview["policy"]["statuses"]["common_vocabulary"]
+    assert overview["policy"]["retention"]["keep_latest"] == 20
+    assert overview["policy"]["markdown_views"]["generation_policy"] == "on_demand_only"
+    assert overview["policy"]["mcp_read_defaults"]["compact"] is True
+    assert "get_recent_activity" in overview["policy"]["mcp_read_defaults"]["tools"]
+    assert overview["policy"]["semantic_retrieval"]["default_strategy"] == "fts5_plus_structured_reads"
+    assert overview["policy"]["semantic_retrieval"]["embeddings_enabled"] is False
 
 
 def test_archive_and_delete_require_safe_lifecycle(db: DatabaseManager) -> None:
@@ -298,6 +308,7 @@ def test_database_health_reports_duplicates_invalid_status_and_low_signal_attrib
     db.create_entity("task.two", "task", name="Duplicate Name", status="pending")
     db.create_entity("task.weird", "task", name="Odd status", status="stalled")
     db.upsert_attributes("task.weird", {"owner": "unknown"})
+    db.upsert_attributes("task.weird", {"customflag": "true"})
     for index in range(21):
         db.append_content("task.weird", "reasoning", f"reasoning item {index}")
 
@@ -307,6 +318,7 @@ def test_database_health_reports_duplicates_invalid_status_and_low_signal_attrib
     assert health["issue_counts"]["duplicate_candidates"] >= 1
     assert health["issue_counts"]["invalid_statuses"] >= 1
     assert health["issue_counts"]["low_quality_attributes"] >= 1
+    assert health["issue_counts"]["attribute_namespace_issues"] >= 1
     assert health["issue_counts"]["high_volume_content"] >= 1
 
 

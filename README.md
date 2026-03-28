@@ -77,7 +77,7 @@ The server also creates an FTS5 index for `content.body` when available.
 - `export_markdown_views` with `user_requested=true` and a request reason
 - `server_info`
 
-High-frequency summary tools also support a `compact=true` mode that returns an explicit schema envelope for stable machine consumption.
+High-frequency summary tools default to `compact=true` at the MCP boundary and return an explicit schema envelope for stable machine consumption unless a caller opts out.
 `get_recent_activity` now supports `limit`, `offset`, and `compact`, and `get_entity_graph` uses explicit node and edge limits so large graph reads stay bounded.
 
 ## Resources And Prompt
@@ -199,6 +199,21 @@ For long-running AI usage, the hygiene tools matter as much as the write tools:
 - `get_database_health` reports duplicate candidates, invalid statuses, low-signal attributes, and retention pressure.
 - `prune_content_retention` provides a controlled cleanup path for high-volume `reasoning` and `log` content.
 
+## Policy Decisions
+
+The remaining phase 7 modeling decisions are now explicit:
+
+- Canonical entity ids: generated ids use `<entity_type>.<slug>[.<n>]`. Project-scoped memory-area anchors may use project-prefixed ids such as `project.sqlite-mcp.roadmap`.
+- Relationship vocabulary: use the built-in relationship set when possible, and use the `custom.` namespace for project-specific edges. There is no registry table.
+- Attribute keys: common unnamespaced keys are reserved for shared fields such as `priority`, `owner`, `phase_number`, `path`, and `source`. New custom keys should use lowercase dotted namespaces such as `meta.*`, `source.*`, `client.*`, `trace.*`, or `ui.*`.
+- Status vocabulary: common entity types use a shared status vocabulary exposed by the schema, and other entity types may use stable identifier-style statuses when a specialized lifecycle is required.
+- Retention: `reasoning` and `log` content are the only default retention-managed content types, with a recommended keep-latest count of `20` and dry-run-first pruning.
+- Markdown generation: markdown views are on-demand only and SQLite remains authoritative.
+- MCP read defaults: high-frequency read tools default to `compact=true` and callers opt out with `compact=false` when they need fuller payloads.
+- Semantic retrieval: the baseline stays on SQLite FTS5 plus structured read models. Embeddings are intentionally out of scope unless a concrete retrieval gap appears that those mechanisms cannot cover.
+
+These policy decisions are also exposed programmatically through `schema_overview()` / `memory://schema` and checked in `get_database_health()` where appropriate.
+
 ## Suggested Modeling Conventions
 
 - Use stable ids such as `task.auth-flow`, `file.src.server`, `decision.schema-graph-core`.
@@ -206,3 +221,31 @@ For long-running AI usage, the hygiene tools matter as much as the write tools:
 - Put volatile metadata in `attributes`, not in new tables.
 - Use `content_type` to distinguish `note`, `spec`, `analysis`, `reasoning`, `log`.
 - Use relationships deliberately: `depends_on`, `implements`, `blocks`, `calls`, `owns`.
+
+## Quick start scripts
+
+For a one-command local setup from an empty repo root on Windows, run:
+
+PowerShell:
+```powershell
+.\install.ps1
+```
+
+CMD/Bash:
+```bash
+install.bat
+```
+
+These scripts perform:
+- `git init` (if needed)
+- `python -m venv .venv`
+- Activate `.venv`
+- `pip install -e .`
+- `sqlite-project-memory-admin bootstrap-self --repo-root .`
+- `sqlite-project-memory-admin project-state`
+- `sqlite-project-memory-admin health`
+
+Then start server with:
+```powershell
+python -m sqlite_mcp_server
+```

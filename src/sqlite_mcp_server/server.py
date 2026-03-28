@@ -680,7 +680,7 @@ def get_project_overview(ctx: Context | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_project_state(limit: int = 10, compact: bool = False, ctx: Context | None = None) -> dict[str, Any]:
+def get_project_state(limit: int = 10, compact: bool = True, ctx: Context | None = None) -> dict[str, Any]:
     """Return a compact project-state summary for AI resumption and status checks."""
     assert ctx is not None
     return _db(ctx).get_project_state(limit=limit, compact=compact)
@@ -690,7 +690,7 @@ def get_project_state(limit: int = 10, compact: bool = False, ctx: Context | Non
 def get_open_tasks(
     limit: int = 25,
     offset: int = 0,
-    compact: bool = False,
+    compact: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Return open task-like entities in a compact, deterministic shape."""
@@ -702,7 +702,7 @@ def get_open_tasks(
 def get_decision_log(
     limit: int = 25,
     offset: int = 0,
-    compact: bool = False,
+    compact: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Return decisions and recent supporting note excerpts without requiring ad hoc SQL."""
@@ -714,7 +714,7 @@ def get_decision_log(
 def get_architecture_summary(
     node_limit: int = 100,
     relationship_limit: int = 150,
-    compact: bool = False,
+    compact: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Return a compact architecture-oriented node and relationship summary."""
@@ -730,7 +730,7 @@ def get_architecture_summary(
 def get_recent_reasoning(
     limit: int = 20,
     offset: int = 0,
-    compact: bool = False,
+    compact: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Return recent reasoning excerpts for quick AI context recovery."""
@@ -744,7 +744,7 @@ def get_dependency_view(
     max_depth: int = 2,
     relationship_types: list[str] | None = None,
     limit: int = 200,
-    compact: bool = False,
+    compact: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Return dependency-oriented graph data with stable compact fields."""
@@ -762,7 +762,7 @@ def get_dependency_view(
 def get_recent_activity(
     limit: int = 20,
     offset: int = 0,
-    compact: bool = False,
+    compact: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Return recent entities, content, and events to help an AI resume context quickly."""
@@ -802,7 +802,7 @@ def get_entity_graph(
     relationship_type: str | None = None,
     edge_limit: int = 200,
     node_limit: int = 250,
-    compact: bool = False,
+    compact: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Traverse outward relationship dependencies from an entity."""
