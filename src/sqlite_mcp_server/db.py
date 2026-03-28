@@ -2204,37 +2204,59 @@ class DatabaseManager:
             "entities_touched": entities_touched,
         }
 
-    def get_recent_activity(self, limit: int = 20) -> dict[str, Any]:
-        limit = max(1, min(limit, 100))
-        return {
-            "recent_events": self._fetch_all(
-                """
-                SELECT id, entity_id, event_type, data, created_at
-                FROM events
-                ORDER BY created_at DESC, id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ),
-            "recent_entities": self._fetch_all(
-                """
-                SELECT id, type, name, status, updated_at
-                FROM entities
-                ORDER BY updated_at DESC, id ASC
-                LIMIT ?
-                """,
-                (limit,),
-            ),
-            "recent_content": self._fetch_all(
-                """
-                SELECT id, entity_id, content_type, created_at
-                FROM content
-                ORDER BY created_at DESC, id ASC
-                LIMIT ?
-                """,
-                (limit,),
-            ),
-        }
+    def get_recent_activity(self, limit: int = 20, offset: int = 0, compact: bool = False) -> dict[str, Any]:
+        limit = _bounded_limit(limit, maximum=100)
+        offset = _bounded_offset(offset)
+
+        total_events = (self._fetch_one("SELECT COUNT(*) AS count FROM events") or {"count": 0})["count"]
+        total_entities = (self._fetch_one("SELECT COUNT(*) AS count FROM entities") or {"count": 0})["count"]
+        total_content = (self._fetch_one("SELECT COUNT(*) AS count FROM content") or {"count": 0})["count"]
+
+        recent_events = self._fetch_all(
+            """
+            SELECT id, entity_id, event_type, data, created_at
+            FROM events
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        recent_entities = self._fetch_all(
+            """
+            SELECT id, type, name, status, updated_at
+            FROM entities
+            ORDER BY updated_at DESC, id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        recent_content = self._fetch_all(
+            """
+            SELECT id, entity_id, content_type, created_at
+            FROM content
+            ORDER BY created_at DESC, id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+
+        return _summary_envelope(
+            "recent_activity.v1",
+            {
+                "limit": limit,
+                "offset": offset,
+                "recent_events": recent_events,
+                "recent_entities": recent_entities,
+                "recent_content": recent_content,
+                "event_total_count": total_events,
+                "entity_total_count": total_entities,
+                "content_total_count": total_content,
+                "has_more_events": offset + len(recent_events) < total_events,
+                "has_more_entities": offset + len(recent_entities) < total_entities,
+                "has_more_content": offset + len(recent_content) < total_content,
+            },
+            compact=compact,
+        )
 
     def execute_read_query(
         self,
@@ -2902,9 +2924,14 @@ class DatabaseManager:
         entity_id: str,
         max_depth: int = 2,
         relationship_type: str | None = None,
+        edge_limit: int = 200,
+        node_limit: int = 250,
+        compact: bool = False,
     ) -> dict[str, Any]:
         entity_id = _validate_identifier(entity_id, "entity id")
-        max_depth = max(1, min(max_depth, 8))
+        max_depth = _bounded_limit(max_depth, maximum=8)
+        edge_limit = _bounded_limit(edge_limit, maximum=500)
+        node_limit = _bounded_limit(node_limit, maximum=500)
 
         if relationship_type:
             relationship_type = _validate_relationship_type(relationship_type)
@@ -2914,7 +2941,7 @@ class DatabaseManager:
             type_clause = ""
             parameters = (entity_id, max_depth)
 
-        edges = self._fetch_all(
+        raw_edges = self._fetch_all(
             f"""
             WITH RECURSIVE graph(depth, id, from_entity, to_entity, type, created_at) AS (
                 SELECT 1, r.id, r.from_entity, r.to_entity, r.type, r.created_at
@@ -2929,9 +2956,14 @@ class DatabaseManager:
                 WHERE graph.depth < ? {type_clause}
             )
             SELECT DISTINCT * FROM graph ORDER BY depth, id
+            LIMIT ?
             """,
-            parameters if relationship_type is None else (entity_id, relationship_type, max_depth, relationship_type),
+            (*parameters, edge_limit + 1)
+            if relationship_type is None
+            else (entity_id, relationship_type, max_depth, relationship_type, edge_limit + 1),
         )
+        has_more_edges = len(raw_edges) > edge_limit
+        edges = raw_edges[:edge_limit]
 
         node_ids = {entity_id}
         for edge in edges:
@@ -2939,15 +2971,27 @@ class DatabaseManager:
             node_ids.add(edge["to_entity"])
 
         placeholders = ", ".join("?" for _ in node_ids)
-        nodes = self._fetch_all(
-            f"SELECT * FROM entities WHERE id IN ({placeholders}) ORDER BY type, id",
-            tuple(sorted(node_ids)),
+        raw_nodes = self._fetch_all(
+            f"SELECT * FROM entities WHERE id IN ({placeholders}) ORDER BY type, id LIMIT ?",
+            (*tuple(sorted(node_ids)), node_limit + 1),
         )
+        has_more_nodes = len(raw_nodes) > node_limit
+        nodes = raw_nodes[:node_limit]
 
-        return {
-            "root": self.get_entity(entity_id, include_related=False),
-            "depth": max_depth,
-            "relationship_type": relationship_type,
-            "nodes": nodes,
-            "relationships": edges,
-        }
+        return _summary_envelope(
+            "entity_graph.v1",
+            {
+                "root": self.get_entity(entity_id, include_related=False),
+                "depth": max_depth,
+                "relationship_type": relationship_type,
+                "edge_limit": edge_limit,
+                "node_limit": node_limit,
+                "has_more_edges": has_more_edges,
+                "has_more_nodes": has_more_nodes,
+                "node_count": len(nodes),
+                "relationship_count": len(edges),
+                "nodes": nodes,
+                "relationships": edges,
+            },
+            compact=compact,
+        )

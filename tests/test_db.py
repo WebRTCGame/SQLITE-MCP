@@ -407,6 +407,45 @@ def test_dependency_view_without_root_returns_filtered_graph_slice(db: DatabaseM
     assert all(item["type"] in {"blocks", "depends_on"} for item in dependency_view["relationships"])
 
 
+def test_recent_activity_paginates_with_compact_metadata(db: DatabaseManager) -> None:
+    db.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+    for index in range(4):
+        entity_id = f"task.activity-{index}"
+        db.upsert_entity(entity_id, "task", name=f"Activity {index}", status="pending")
+        db.append_content(entity_id, "note", f"note {index}")
+
+    recent = db.get_recent_activity(limit=2, offset=1, compact=True)
+
+    assert recent["schema"] == "recent_activity.v1"
+    assert recent["data"]["limit"] == 2
+    assert recent["data"]["offset"] == 1
+    assert len(recent["data"]["recent_events"]) <= 2
+    assert len(recent["data"]["recent_entities"]) <= 2
+    assert len(recent["data"]["recent_content"]) <= 2
+    assert recent["data"]["has_more_events"] is True
+
+
+def test_entity_graph_applies_edge_and_node_limits(db: DatabaseManager) -> None:
+    for index in range(6):
+        db.create_entity(f"task.graph-{index}", "task", name=f"Graph {index}")
+    for index in range(5):
+        db.connect_entities(f"task.graph-{index}", f"task.graph-{index + 1}", "depends_on")
+
+    graph = db.get_entity_graph(
+        "task.graph-0",
+        max_depth=5,
+        edge_limit=2,
+        node_limit=2,
+        compact=True,
+    )
+
+    assert graph["schema"] == "entity_graph.v1"
+    assert graph["data"]["relationship_count"] == 2
+    assert graph["data"]["node_count"] == 2
+    assert graph["data"]["has_more_edges"] is True
+    assert graph["data"]["has_more_nodes"] is True
+
+
 def test_json_snapshot_export_and_import_round_trip(db: DatabaseManager, tmp_path: Path) -> None:
     db.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
     db.upsert_entity("task.backup", "task", name="Backup state", status="planned")

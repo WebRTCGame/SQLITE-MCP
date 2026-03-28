@@ -169,7 +169,6 @@ def _bootstrap_self(manager: DatabaseManager, repo_root: Path) -> dict[str, Any]
     tracked_files = [
         ("file.pyproject", "pyproject.toml", "Project packaging and dependency configuration.", ["config"]),
         ("file.readme", "README.md", "Project overview, run instructions, and tool guidance.", ["docs"]),
-        ("file.roadmap", "roadmap.md", "Implementation roadmap and definition of done.", ["docs", "roadmap"]),
         ("file.db", "src/sqlite_mcp_server/db.py", "Database schema, validation, lifecycle, hygiene, and summary query logic.", ["database", "source"]),
         ("file.server", "src/sqlite_mcp_server/server.py", "FastMCP server tools, resources, prompts, and entrypoint.", ["mcp", "source"]),
         ("file.cli", "src/sqlite_mcp_server/cli.py", "Admin CLI for bootstrapping, inspecting, and exporting project memory.", ["cli", "source"]),
@@ -222,9 +221,9 @@ def _bootstrap_self(manager: DatabaseManager, repo_root: Path) -> dict[str, Any]
     )
     _ensure_content(
         manager,
-        "file.roadmap",
+        "project.sqlite-mcp.roadmap",
         "note",
-        "Current focus: compact AI-facing MCP contracts, controlled vocabularies, and integration-level validation.",
+        "Current focus: keep roadmap state authoritative in SQLite and only generate roadmap markdown on explicit request.",
         "note.roadmap-focus",
     )
 
@@ -234,217 +233,6 @@ def _bootstrap_self(manager: DatabaseManager, repo_root: Path) -> dict[str, Any]
         "tracked_files": created_files,
         "project_state": state,
     }
-
-
-def _sync_roadmap(manager: DatabaseManager, roadmap_path: Path) -> dict[str, Any]:
-    text = roadmap_path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    roadmap_entity_id = "project.sqlite-mcp.roadmap"
-    section_titles = {
-        "Goal",
-        "Current State",
-        "Design Constraints",
-        "Architectural Direction",
-        "Completed Foundations",
-        "Completed AI Read Models",
-        "Recommended Build Order",
-        "Definition Of Done",
-    }
-
-    current_phase: dict[str, Any] | None = None
-    current_section: str | None = None
-    phases: list[dict[str, Any]] = []
-    open_decisions: list[str] = []
-    roadmap_sections: dict[str, list[str]] = {title: [] for title in section_titles}
-    current_roadmap_section: str | None = None
-
-    phase_header_re = re.compile(r"^## Phase (\d+):\s+(.*)$")
-    for raw_line in lines:
-        line = raw_line.rstrip()
-        stripped = line.strip()
-
-        phase_match = phase_header_re.match(stripped)
-        if phase_match:
-            current_phase = {
-                "number": int(phase_match.group(1)),
-                "title": phase_match.group(2).strip(),
-                "objective": None,
-                "tasks": [],
-                "acceptance": [],
-            }
-            phases.append(current_phase)
-            current_section = None
-            current_roadmap_section = None
-            continue
-
-        if stripped == "## Open Decisions":
-            current_phase = None
-            current_section = "open_decisions"
-            current_roadmap_section = None
-            continue
-
-        if stripped.startswith("## "):
-            heading = stripped[3:].strip()
-            if heading in section_titles:
-                current_phase = None
-                current_section = None
-                current_roadmap_section = heading
-                continue
-
-        if stripped.startswith("## "):
-            current_phase = None
-            current_section = None
-            current_roadmap_section = None
-            continue
-
-        if current_phase is not None:
-            if stripped.startswith("Objective:"):
-                current_phase["objective"] = stripped.removeprefix("Objective:").strip()
-                continue
-            if stripped == "Tasks:":
-                current_section = "tasks"
-                continue
-            if stripped == "Acceptance criteria:":
-                current_section = "acceptance"
-                continue
-            if stripped.startswith("- ") and current_section == "tasks":
-                current_phase["tasks"].append(stripped[2:].strip())
-                continue
-            if stripped.startswith("- ") and current_section == "acceptance":
-                current_phase["acceptance"].append(stripped[2:].strip())
-                continue
-
-        if current_section == "open_decisions" and stripped.startswith("- "):
-            open_decisions.append(stripped[2:].strip())
-
-        if current_roadmap_section is not None:
-            roadmap_sections[current_roadmap_section].append(line)
-
-    synced_phase_ids: list[str] = []
-    synced_task_ids: list[str] = []
-    synced_decision_ids: list[str] = []
-
-    manager.upsert_entity(
-        roadmap_entity_id,
-        "roadmap",
-        name="Roadmap",
-        description="Structured roadmap state synchronized from roadmap.md.",
-        status="active",
-        tags=["roadmap"],
-    )
-
-    section_content_ids = {
-        "Goal": "roadmap-section.goal",
-        "Current State": "roadmap-section.current-state",
-        "Design Constraints": "roadmap-section.design-constraints",
-        "Architectural Direction": "roadmap-section.architectural-direction",
-        "Completed Foundations": "roadmap-section.completed-foundations",
-        "Completed AI Read Models": "roadmap-section.completed-ai-read-models",
-        "Recommended Build Order": "roadmap-section.recommended-build-order",
-        "Definition Of Done": "roadmap-section.definition-of-done",
-    }
-    for section_title, content_id in section_content_ids.items():
-        body = "\n".join(roadmap_sections[section_title]).strip()
-        _upsert_content(
-            manager,
-            roadmap_entity_id,
-            "spec",
-            body,
-            content_id,
-        )
-
-    for phase in phases:
-        phase_slug = _slugify_text(phase["title"])
-        phase_id = f"phase.{phase['number']}.{phase_slug}"
-        manager.upsert_entity(
-            phase_id,
-            "phase",
-            name=f"Phase {phase['number']}: {phase['title']}",
-            description=phase["objective"],
-            status="planned",
-            attributes={"phase_number": str(phase["number"]), "source": "roadmap.md"},
-            tags=["roadmap", "phase"],
-        )
-        manager.connect_entities(roadmap_entity_id, phase_id, "contains")
-        synced_phase_ids.append(phase_id)
-
-        if phase["acceptance"]:
-            _ensure_content(
-                manager,
-                phase_id,
-                "spec",
-                "\n".join(f"- {item}" for item in phase["acceptance"]),
-                f"spec.{phase_id}",
-            )
-
-        for task_index, task_text in enumerate(phase["tasks"], start=1):
-            task_slug = _slugify_text(task_text)
-            task_id = f"task.phase{phase['number']}.{task_slug}"
-            manager.upsert_entity(
-                task_id,
-                "task",
-                name=task_text,
-                description=f"Roadmap task for Phase {phase['number']}.",
-                status="planned",
-                attributes={
-                    "phase_number": str(phase["number"]),
-                    "task_order": str(task_index),
-                    "source": "roadmap.md",
-                },
-                tags=["roadmap", "task"],
-            )
-            manager.connect_entities(phase_id, task_id, "contains")
-            synced_task_ids.append(task_id)
-
-    for decision_text in open_decisions:
-        decision_id = f"decision.{_slugify_text(decision_text)}"
-        manager.upsert_entity(
-            decision_id,
-            "decision",
-            name=decision_text,
-            description="Open roadmap decision requiring resolution.",
-            status="draft",
-            attributes={"source": "roadmap.md"},
-            tags=["decision", "roadmap", "open-decision"],
-        )
-        manager.connect_entities(roadmap_entity_id, decision_id, "tracks")
-        synced_decision_ids.append(decision_id)
-
-    tracked_roadmap_entities = {
-        "phase": (synced_phase_ids, "Roadmap phase removed from roadmap.md"),
-        "task": (synced_task_ids, "Roadmap task removed from roadmap.md"),
-        "decision": (synced_decision_ids, "Open roadmap decision removed from roadmap.md"),
-    }
-    archived_ids: list[str] = []
-    for entity_type, (active_ids, reason) in tracked_roadmap_entities.items():
-        existing_entities = manager.list_entities(
-            entity_type=entity_type,
-            attribute_key="source",
-            attribute_value="roadmap.md",
-            limit=200,
-        )
-        stale_ids = sorted(
-            entity["id"]
-            for entity in existing_entities
-            if entity["id"] not in active_ids and entity.get("status") != "archived"
-        )
-        for entity_id in stale_ids:
-            manager.archive_entity(entity_id, reason=reason)
-            archived_ids.append(entity_id)
-
-    return {
-        "roadmap_path": str(roadmap_path),
-        "section_count": sum(1 for lines in roadmap_sections.values() if any(line.strip() for line in lines)),
-        "phase_count": len(synced_phase_ids),
-        "task_count": len(synced_task_ids),
-        "open_decision_count": len(synced_decision_ids),
-        "phase_ids": synced_phase_ids,
-        "task_ids": synced_task_ids,
-        "open_decision_ids": synced_decision_ids,
-        "archived_ids": archived_ids,
-        "project_state": manager.get_project_state(limit=10),
-    }
-
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sqlite-project-memory-admin")
@@ -511,12 +299,6 @@ def _build_parser() -> argparse.ArgumentParser:
     import_json.add_argument("--input-path", type=Path, required=True)
     import_json.add_argument("--merge", action="store_true", help="Merge into existing records instead of replacing them.")
 
-    sync_roadmap = subparsers.add_parser(
-        "sync-roadmap",
-        help="Synchronize roadmap.md into structured phase, task, and decision entities.",
-    )
-    sync_roadmap.add_argument("--roadmap-path", type=Path, default=Path.cwd() / "roadmap.md")
-
     sync_document = subparsers.add_parser(
         "sync-document",
         help="Synchronize a hand-maintained markdown document into a project memory area anchor.",
@@ -571,10 +353,6 @@ def main() -> None:
             input_path = args.input_path.resolve()
             snapshot = json.loads(input_path.read_text(encoding="utf-8"))
             _print_json(manager.import_json_snapshot(snapshot, replace=not args.merge))
-            return
-
-        if args.command == "sync-roadmap":
-            _print_json(_sync_roadmap(manager, args.roadmap_path.resolve()))
             return
 
         if args.command == "sync-document":

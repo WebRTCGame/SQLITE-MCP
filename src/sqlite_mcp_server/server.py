@@ -759,10 +759,15 @@ def get_dependency_view(
 
 
 @mcp.tool()
-def get_recent_activity(limit: int = 20, ctx: Context | None = None) -> dict[str, Any]:
+def get_recent_activity(
+    limit: int = 20,
+    offset: int = 0,
+    compact: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
     """Return recent entities, content, and events to help an AI resume context quickly."""
     assert ctx is not None
-    return _db(ctx).get_recent_activity(limit=limit)
+    return _db(ctx).get_recent_activity(limit=limit, offset=offset, compact=compact)
 
 
 @mcp.tool()
@@ -795,6 +800,9 @@ def get_entity_graph(
     entity_id: str,
     max_depth: int = 2,
     relationship_type: str | None = None,
+    edge_limit: int = 200,
+    node_limit: int = 250,
+    compact: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Traverse outward relationship dependencies from an entity."""
@@ -803,6 +811,9 @@ def get_entity_graph(
         entity_id=entity_id,
         max_depth=max_depth,
         relationship_type=relationship_type,
+        edge_limit=edge_limit,
+        node_limit=node_limit,
+        compact=compact,
     )
 
 
@@ -917,6 +928,7 @@ def project_memory_policy(project_name: str = "this project") -> str:
         "- Avoid duplicate entities. Reuse existing ids when representing the same object.\n"
         "- Prefer concise, information-dense records over verbose document copies.\n"
         "- Use run_read_query for diagnostics only; do not treat raw SQL as the primary write interface.\n"
+        "- Maintain roadmap state directly in SQLite entities and content; do not import or depend on roadmap.md as a source file.\n"
         "- Do not generate markdown views unless the user explicitly asks for a human-readable document.\n"
         "- Never treat generated markdown views as authoritative state; use SQLite/MCP reads instead."
     )

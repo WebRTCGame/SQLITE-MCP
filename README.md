@@ -9,7 +9,7 @@ The server is designed around four rules:
 3. State is authoritative.
 4. Narrative is separate from structure.
 
-Instead of generating and maintaining many parallel documents, the MCP server stores project state in SQLite and exposes tools for safe access. Files such as `todo.md` or `roadmap.md` can be generated later as views, not treated as the source of truth.
+Instead of generating and maintaining many parallel documents, the MCP server stores project state in SQLite and exposes tools for safe access. Files such as `todo.md` or `roadmap.md` can be generated later on explicit request as views, not treated as the source of truth.
 
 ## What It Stores
 
@@ -78,6 +78,7 @@ The server also creates an FTS5 index for `content.body` when available.
 - `server_info`
 
 High-frequency summary tools also support a `compact=true` mode that returns an explicit schema envelope for stable machine consumption.
+`get_recent_activity` now supports `limit`, `offset`, and `compact`, and `get_entity_graph` uses explicit node and edge limits so large graph reads stay bounded.
 
 ## Resources And Prompt
 
@@ -179,10 +180,13 @@ If this server is going to be called frequently by an AI, the useful surface is 
 
 For the remaining human-facing documents, `sync-document` provides a structured migration path into the anchor memory areas for `architecture`, `decisions`, `plan`, and `notes`. The generated views then combine that synced document content with the structured SQLite state instead of rendering a flat dump.
 
+Roadmap state is different: it is maintained directly through SQLite entities, attributes, relationships, and content. There is no supported `roadmap.md` import workflow anymore. If an AI needs to change roadmap state, it should use normal MCP write tools such as `upsert_entity`, `append_content`, `set_tags`, and `connect_entities`, then generate `roadmap.md` only when a user explicitly asks for that artifact.
+
 The intended pattern is:
 
 1. Use explicit domain tools for writes.
 2. Use summary-first read tools such as `get_project_state`, `get_open_tasks`, `get_decision_log`, `get_architecture_summary`, `get_recent_reasoning`, and `get_dependency_view` before falling back to lower-level queries.
+   `get_recent_activity` is also safe for resumptions because it paginates instead of returning an unbounded activity dump.
 3. Use `run_read_query` only for read-only inspection when the built-in summaries are not enough.
 4. Generate markdown views only when a user explicitly asks for a document, and pass that request through the MCP call.
 5. Keep SQLite authoritative.

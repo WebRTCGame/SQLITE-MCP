@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlite_mcp_server.cli import _bootstrap_self, _sync_document, _sync_roadmap
+from sqlite_mcp_server.cli import _bootstrap_self, _sync_document
 from sqlite_mcp_server.db import DatabaseManager
 
 
@@ -15,7 +15,6 @@ def test_bootstrap_self_is_idempotent_and_tracks_repo_files(tmp_path: Path) -> N
     for relative_path in [
         "pyproject.toml",
         "README.md",
-        "roadmap.md",
         "src/sqlite_mcp_server/db.py",
         "src/sqlite_mcp_server/server.py",
         "src/sqlite_mcp_server/cli.py",
@@ -41,99 +40,78 @@ def test_bootstrap_self_is_idempotent_and_tracks_repo_files(tmp_path: Path) -> N
         assert [item["id"] for item in notes] == ["note.roadmap-focus", "note.self-hosting"]
 
         project_state = manager.get_project_state(limit=10)
-        assert project_state["counts"]["entities"] >= 9
+        assert project_state["counts"]["entities"] >= 8
     finally:
         manager.close()
 
 
-def test_sync_roadmap_creates_phase_task_and_decision_entities(tmp_path: Path) -> None:
-    roadmap_path = tmp_path / "roadmap.md"
-    roadmap_path.write_text(
-    """# Sample Roadmap
-
-## Goal
-
-Finish the SQLite-backed project memory MCP.
-
-## Current State
-
-Already implemented:
-
-- Generic graph-friendly schema.
-
-## Phase 4: Compact Contracts And Controlled Vocabularies
-
-Objective: improve AI efficiency without redesigning the storage model.
-
-Tasks:
-
-- Define stable response schemas for all high-frequency MCP tools.
-- Add compact response modes where large or repetitive payloads are expected.
-
-Acceptance criteria:
-
-- The AI can complete common workflows with fewer tool calls and fewer tokens.
-
-## Open Decisions
-
-- Canonical entity id format.
-""",
-        encoding="utf-8",
-    )
-
+def test_roadmap_renders_from_db_native_writes(tmp_path: Path) -> None:
     manager = DatabaseManager(tmp_path / "memory.db")
     manager.connect()
     try:
         manager.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
 
-        first = _sync_roadmap(manager, roadmap_path)
-
-        roadmap_path.write_text(
-    """# Sample Roadmap
-
-## Goal
-
-Finish the SQLite-backed project memory MCP.
-
-## Current State
-
-Already implemented:
-
-- Generic graph-friendly schema.
-
-## Phase 5: Content Migration
-
-Objective: move the remaining hand-maintained markdown into structured memory.
-
-Tasks:
-
-- Sync remaining human-authored notes into SQLite.
-
-Acceptance criteria:
-
-- Generated roadmap output only reflects the current roadmap source.
-""",
-            encoding="utf-8",
+        manager.upsert_entity(
+            "project.sqlite-mcp.roadmap",
+            "roadmap",
+            name="Roadmap",
+            description="Structured roadmap state maintained directly in SQLite.",
+            status="active",
+            tags=["roadmap"],
         )
-        second = _sync_roadmap(manager, roadmap_path)
-
-        assert first["phase_count"] == 1
-        assert first["task_count"] == 2
-        assert first["open_decision_count"] == 1
-        assert first["section_count"] >= 2
-        assert second["task_count"] == 1
-        assert "phase.4.compact-contracts-and-controlled-vocabularies" in second["archived_ids"]
-        assert "decision.canonical-entity-id-format" in second["archived_ids"]
-
-        phase = manager.get_entity("phase.4.compact-contracts-and-controlled-vocabularies", include_related=True)
-        assert phase["status"] == "archived"
-        assert any(item["content_type"] == "spec" for item in phase["content"])
-
-        task = manager.get_entity(second["task_ids"][0], include_related=True)
-        assert task["status"] == "planned"
-
-        decision = manager.get_entity("decision.canonical-entity-id-format", include_related=True)
-        assert decision["status"] == "archived"
+        manager.connect_entities("project.sqlite-mcp", "project.sqlite-mcp.roadmap", "has_memory_area")
+        manager.append_content(
+            "project.sqlite-mcp.roadmap",
+            "spec",
+            "Finish the SQLite-backed project memory MCP.",
+            content_id="roadmap-section.goal",
+        )
+        manager.append_content(
+            "project.sqlite-mcp.roadmap",
+            "spec",
+            "Already implemented:\n\n- Generic graph-friendly schema.",
+            content_id="roadmap-section.current-state",
+        )
+        manager.create_entity(
+            "phase.5.content-migration",
+            "phase",
+            name="Phase 5: Content Migration",
+            description="Move remaining hand-maintained markdown into structured memory.",
+            status="planned",
+            attributes={"phase_number": "5", "source": "sqlite"},
+            tags=["roadmap", "phase"],
+        )
+        manager.connect_entities("project.sqlite-mcp.roadmap", "phase.5.content-migration", "contains")
+        manager.append_content(
+            "phase.5.content-migration",
+            "spec",
+            "- Generated roadmap output only reflects the current SQLite roadmap state.",
+            content_id="spec.phase.5.content-migration",
+        )
+        manager.create_entity(
+            "task.phase5.sync-remaining-human-authored-notes-into-sqlite",
+            "task",
+            name="Sync remaining human-authored notes into SQLite.",
+            description="Roadmap task for Phase 5.",
+            status="planned",
+            attributes={"phase_number": "5", "task_order": "1", "source": "sqlite"},
+            tags=["roadmap", "task"],
+        )
+        manager.connect_entities(
+            "phase.5.content-migration",
+            "task.phase5.sync-remaining-human-authored-notes-into-sqlite",
+            "contains",
+        )
+        manager.create_entity(
+            "decision.canonical-entity-id-format",
+            "decision",
+            name="Canonical entity id format.",
+            description="Open roadmap decision requiring resolution.",
+            status="draft",
+            attributes={"source": "sqlite"},
+            tags=["decision", "roadmap", "open-decision"],
+        )
+        manager.connect_entities("project.sqlite-mcp.roadmap", "decision.canonical-entity-id-format", "tracks")
 
         health = manager.get_database_health(limit=10)
         assert health["issue_counts"]["invalid_statuses"] == 0
@@ -147,11 +125,9 @@ Acceptance criteria:
         assert "[file] roadmap.md" not in rendered["roadmap.md"]
         assert "## Goal" in rendered["roadmap.md"]
         assert "Finish the SQLite-backed project memory MCP." in rendered["roadmap.md"]
-        assert "## Open Decisions" not in rendered["roadmap.md"]
-        assert "## Phase 4: Compact Contracts And Controlled Vocabularies" not in rendered["roadmap.md"]
+        assert "## Open Decisions" in rendered["roadmap.md"]
         assert "## Phase 5: Content Migration" in rendered["roadmap.md"]
         assert "### Tasks" in rendered["roadmap.md"]
-        assert "## Phase 4" not in rendered["todo.md"]
         assert "## Phase 5" in rendered["todo.md"]
     finally:
         manager.close()
