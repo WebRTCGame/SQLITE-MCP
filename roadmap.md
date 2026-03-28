@@ -131,9 +131,7 @@ Objective: add a small number of realistic end-to-end scenarios beyond the curre
 
 Tasks:
 
-- Add acceptance tests that bootstrap a project and walk through a realistic AI workflow.
 - Add large-content and pagination tests where relevant.
-- Add one regression path that verifies backup, restore, and regenerated document output together.
 
 Acceptance criteria:
 

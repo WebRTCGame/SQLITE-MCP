@@ -87,10 +87,18 @@ def test_render_markdown_views_uses_database_as_source_of_truth(db: DatabaseMana
         "Use explicit MCP verbs for write operations.",
     )
 
-    rendered = db.render_markdown_views(["todo", "notes", "overview"])
+    with pytest.raises(ValidationError):
+        db.render_markdown_views(["todo", "notes", "overview"])
+
+    rendered = db.render_markdown_views(
+        ["todo", "notes", "overview"],
+        user_requested=True,
+        request_reason="User explicitly asked for markdown views.",
+    )
 
     assert set(rendered) == {"todo.md", "notes.md", "overview.md"}
     assert rendered["todo.md"].startswith("<!-- Generated file: do not edit manually. -->")
+    assert "<!-- Non-authoritative generated view: use SQLite/MCP reads for current project state. -->" in rendered["todo.md"]
     assert "<!-- Description: Generated task backlog grouped from the SQLite source of truth. -->" in rendered["todo.md"]
     assert "<!-- Generated at: " in rendered["todo.md"]
     assert "## Phase 4" in rendered["todo.md"]
@@ -107,7 +115,13 @@ def test_export_markdown_views_requires_explicit_overwrite_and_can_require_exist
 
     missing_dir = tmp_path / "missing-exports"
     with pytest.raises(ValidationError):
-        db.export_markdown_views(missing_dir, view_names=["todo"], require_existing_dir=True)
+        db.export_markdown_views(
+            missing_dir,
+            view_names=["todo"],
+            require_existing_dir=True,
+            user_requested=True,
+            request_reason="User asked for a todo export.",
+        )
 
     export_dir = tmp_path / "exports"
     export_dir.mkdir()
@@ -115,12 +129,27 @@ def test_export_markdown_views_requires_explicit_overwrite_and_can_require_exist
     existing_target.write_text("old content\n", encoding="utf-8")
 
     with pytest.raises(ValidationError):
-        db.export_markdown_views(export_dir, view_names=["todo"])
+        db.export_markdown_views(
+            export_dir,
+            view_names=["todo"],
+            user_requested=True,
+            request_reason="User asked for a todo export.",
+        )
 
-    result = db.export_markdown_views(export_dir, view_names=["todo"], overwrite=True)
+    with pytest.raises(ValidationError):
+        db.export_markdown_views(export_dir, view_names=["todo"], overwrite=True)
+
+    result = db.export_markdown_views(
+        export_dir,
+        view_names=["todo"],
+        overwrite=True,
+        user_requested=True,
+        request_reason="User asked for a todo export.",
+    )
 
     assert result["view_count"] == 1
     assert result["overwrite"] is True
+    assert result["request_reason"] == "User asked for a todo export."
     assert str(existing_target) in result["overwritten_files"]
     assert existing_target.read_text(encoding="utf-8").startswith("<!-- Generated file: do not edit manually. -->")
 
@@ -145,7 +174,11 @@ def test_document_views_include_synced_anchor_content_and_structured_sections(db
     db.append_content("project.sqlite-mcp.notes", "note", "Current notes document.", content_id="document.notes.current")
     db.append_content("task.logging", "analysis", "Investigate stderr-safe logging for stdio transport.")
 
-    rendered = db.render_markdown_views(["architecture", "decisions", "plan", "notes"])
+    rendered = db.render_markdown_views(
+        ["architecture", "decisions", "plan", "notes"],
+        user_requested=True,
+        request_reason="User asked for document views.",
+    )
 
     assert "## Current Architecture Document" in rendered["architecture.md"]
     assert "Current architecture document." in rendered["architecture.md"]

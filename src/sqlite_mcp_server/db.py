@@ -2343,7 +2343,19 @@ class DatabaseManager:
             "memory_areas": created_anchors,
         }
 
-    def render_markdown_views(self, view_names: list[str] | None = None) -> dict[str, str]:
+    def _validate_view_generation_request(self, user_requested: bool, request_reason: str | None) -> str:
+        if not user_requested:
+            raise ValidationError(
+                "markdown view generation is locked; only generate views after an explicit user request and pass user_requested=True"
+            )
+        normalized_reason = _normalize_text(request_reason)
+        if normalized_reason is None or len(normalized_reason) < 12:
+            raise ValidationError(
+                "request_reason must describe the user's explicit request and be at least 12 characters long"
+            )
+        return normalized_reason
+
+    def _render_markdown_views_internal(self, view_names: list[str] | None = None) -> dict[str, str]:
         requested = view_names or [
             "overview",
             "todo",
@@ -2383,12 +2395,27 @@ class DatabaseManager:
             for view_name in unique_requested
         }
 
+    def render_markdown_views(
+        self,
+        view_names: list[str] | None = None,
+        *,
+        user_requested: bool = False,
+        request_reason: str | None = None,
+    ) -> dict[str, str]:
+        self._validate_view_generation_request(
+            user_requested=user_requested,
+            request_reason=request_reason,
+        )
+        return self._render_markdown_views_internal(view_names=view_names)
+
     def export_markdown_views(
         self,
         output_dir: Path | str,
         view_names: list[str] | None = None,
         overwrite: bool = False,
         require_existing_dir: bool = False,
+        user_requested: bool = False,
+        request_reason: str | None = None,
     ) -> dict[str, Any]:
         export_dir = Path(output_dir).expanduser().resolve()
         if export_dir.exists() and not export_dir.is_dir():
@@ -2398,7 +2425,11 @@ class DatabaseManager:
                 f"output_dir must already exist when require_existing_dir=True; got {str(export_dir)!r}"
             )
 
-        rendered = self.render_markdown_views(view_names=view_names)
+        normalized_reason = self._validate_view_generation_request(
+            user_requested=user_requested,
+            request_reason=request_reason,
+        )
+        rendered = self._render_markdown_views_internal(view_names=view_names)
         targets = {file_name: export_dir / file_name for file_name in rendered}
         existing_files = [str(target) for target in targets.values() if target.exists()]
         if existing_files and not overwrite:
@@ -2420,6 +2451,7 @@ class DatabaseManager:
             "written_files": written_files,
             "overwritten_files": sorted(existing_files),
             "overwrite": overwrite,
+            "request_reason": normalized_reason,
         }
 
     def _wrap_markdown_view(self, view_name: str, generated_at: str, body: str) -> str:
@@ -2434,6 +2466,8 @@ class DatabaseManager:
         }
         header_lines = [
             "<!-- Generated file: do not edit manually. -->",
+            "<!-- Non-authoritative generated view: use SQLite/MCP reads for current project state. -->",
+            "<!-- Generate only after an explicit user request; do not use this file in place of the database. -->",
             f"<!-- Description: {descriptions[view_name]} -->",
             f"<!-- Generated at: {generated_at} -->",
             "",

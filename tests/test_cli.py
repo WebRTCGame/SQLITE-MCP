@@ -138,7 +138,11 @@ Acceptance criteria:
         health = manager.get_database_health(limit=10)
         assert health["issue_counts"]["invalid_statuses"] == 0
 
-        rendered = manager.render_markdown_views(["todo", "roadmap"])
+        rendered = manager.render_markdown_views(
+            ["todo", "roadmap"],
+            user_requested=True,
+            request_reason="User asked for roadmap views.",
+        )
         assert "Todo (status=active)" not in rendered["todo.md"]
         assert "[file] roadmap.md" not in rendered["roadmap.md"]
         assert "## Goal" in rendered["roadmap.md"]
@@ -171,7 +175,11 @@ def test_sync_document_updates_memory_area_anchor_and_rendered_view(tmp_path: Pa
         assert anchor["attributes"]["source_path"] == str(input_path.resolve())
         assert any(item["id"] == "document.architecture.current" for item in anchor["content"])
 
-        rendered = manager.render_markdown_views(["architecture"])
+        rendered = manager.render_markdown_views(
+            ["architecture"],
+            user_requested=True,
+            request_reason="User asked for architecture view.",
+        )
         assert "## Current Architecture Document" in rendered["architecture.md"]
         assert "The MCP server centers authoritative state in SQLite." in rendered["architecture.md"]
     finally:

@@ -839,11 +839,17 @@ def run_read_query(
 @mcp.tool()
 def render_markdown_views(
     view_names: list[str] | None = None,
+    user_requested: bool = False,
+    request_reason: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, str]:
-    """Render markdown document views from the SQLite source of truth without writing files."""
+    """Render markdown document views only after an explicit user request for a human-readable artifact."""
     assert ctx is not None
-    return _db(ctx).render_markdown_views(view_names=view_names)
+    return _db(ctx).render_markdown_views(
+        view_names=view_names,
+        user_requested=user_requested,
+        request_reason=request_reason,
+    )
 
 
 @mcp.tool()
@@ -852,9 +858,11 @@ def export_markdown_views(
     output_dir: str | None = None,
     overwrite: bool = False,
     require_existing_dir: bool = False,
+    user_requested: bool = False,
+    request_reason: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Write generated markdown view files to disk so humans can consume exported project documents."""
+    """Write generated markdown views only after an explicit user request for a human-readable artifact."""
     assert ctx is not None
     export_dir = Path(output_dir).expanduser().resolve() if output_dir else _default_exports_dir()
     return _db(ctx).export_markdown_views(
@@ -862,6 +870,8 @@ def export_markdown_views(
         view_names=view_names,
         overwrite=overwrite,
         require_existing_dir=require_existing_dir,
+        user_requested=user_requested,
+        request_reason=request_reason,
     )
 
 
@@ -907,7 +917,8 @@ def project_memory_policy(project_name: str = "this project") -> str:
         "- Avoid duplicate entities. Reuse existing ids when representing the same object.\n"
         "- Prefer concise, information-dense records over verbose document copies.\n"
         "- Use run_read_query for diagnostics only; do not treat raw SQL as the primary write interface.\n"
-        "- Generate markdown views when human-readable documents are needed, but keep SQLite authoritative."
+        "- Do not generate markdown views unless the user explicitly asks for a human-readable document.\n"
+        "- Never treat generated markdown views as authoritative state; use SQLite/MCP reads instead."
     )
 
 

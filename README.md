@@ -73,8 +73,8 @@ The server also creates an FTS5 index for `content.body` when available.
 - `get_entity_graph`
 - `bootstrap_project_memory`
 - `run_read_query`
-- `render_markdown_views`
-- `export_markdown_views`
+- `render_markdown_views` with `user_requested=true` and a request reason
+- `export_markdown_views` with `user_requested=true` and a request reason
 - `server_info`
 
 High-frequency summary tools also support a `compact=true` mode that returns an explicit schema envelope for stable machine consumption.
@@ -117,8 +117,8 @@ For local bootstrap and inspection workflows, the package also exposes an admin 
 sqlite-project-memory-admin bootstrap-self --repo-root .
 sqlite-project-memory-admin project-state
 sqlite-project-memory-admin health
-sqlite-project-memory-admin export-views --require-existing-dir exports todo roadmap architecture
-sqlite-project-memory-admin export-views --force todo roadmap architecture
+sqlite-project-memory-admin export-views --user-requested --request-reason "User asked for a roadmap export" --require-existing-dir exports todo roadmap architecture
+sqlite-project-memory-admin export-views --user-requested --request-reason "User asked for refreshed generated docs" --force todo roadmap architecture
 sqlite-project-memory-admin sync-document architecture --input-path architecture.md
 sqlite-project-memory-admin sync-document decisions --input-path decisions.md
 sqlite-project-memory-admin export-json --output-path exports/project_memory.snapshot.json
@@ -126,7 +126,7 @@ sqlite-project-memory-admin import-json --input-path exports/project_memory.snap
 ```
 
 This is mainly useful when you want the project to use its own SQLite memory store without writing one-off scripts.
-Generated markdown export is safe by default: it refuses to overwrite existing view files unless `--force` is provided, and `--require-existing-dir` can be used when automation should fail instead of creating a new output directory.
+Generated markdown export is locked by default: it refuses to render or write views unless the caller explicitly marks the request as user-requested and supplies a reason. It also refuses to overwrite existing view files unless `--force` is provided, and `--require-existing-dir` can be used when automation should fail instead of creating a new output directory.
 
 ## Sample MCP Config
 
@@ -171,7 +171,9 @@ If this server is going to be called frequently by an AI, the useful surface is 
 - `append_content` so narrative memory can be added without the AI having to mint content ids every time.
 - `get_recent_activity` so an AI can resume context quickly after a new session.
 - `run_read_query` for controlled read-only analytics when the built-in tools are not enough.
-- `render_markdown_views` and `export_markdown_views` when human-readable `todo`, `roadmap`, `plan`, `architecture`, `decisions`, or `notes` files are needed.
+- `render_markdown_views` and `export_markdown_views` only after the user explicitly asks for a human-readable `todo`, `roadmap`, `plan`, `architecture`, `decisions`, or `notes` document.
+
+`render_markdown_views` and `export_markdown_views` are intentionally locked behind an explicit user-request contract so an AI does not casually generate markdown and then start using those files as a substitute for SQLite.
 
 `export_markdown_views` also supports explicit overwrite control so generated documents do not silently replace existing files.
 
@@ -182,7 +184,7 @@ The intended pattern is:
 1. Use explicit domain tools for writes.
 2. Use summary-first read tools such as `get_project_state`, `get_open_tasks`, `get_decision_log`, `get_architecture_summary`, `get_recent_reasoning`, and `get_dependency_view` before falling back to lower-level queries.
 3. Use `run_read_query` only for read-only inspection when the built-in summaries are not enough.
-4. Generate markdown views only when a person or downstream tool needs a document.
+4. Generate markdown views only when a user explicitly asks for a document, and pass that request through the MCP call.
 5. Keep SQLite authoritative.
 
 For long-running AI usage, the hygiene tools matter as much as the write tools:

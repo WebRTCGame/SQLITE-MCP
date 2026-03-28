@@ -485,6 +485,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fail instead of creating the output directory when it does not already exist.",
     )
+    export_views.add_argument(
+        "--user-requested",
+        action="store_true",
+        help="Confirm that a human explicitly requested these generated markdown views.",
+    )
+    export_views.add_argument(
+        "--request-reason",
+        type=str,
+        default=None,
+        help="Short description of the user's explicit request for generated markdown views.",
+    )
     export_views.add_argument("views", nargs="*", default=None)
 
     export_json = subparsers.add_parser(
@@ -540,6 +551,8 @@ def main() -> None:
                     view_names=args.views,
                     overwrite=args.force,
                     require_existing_dir=args.require_existing_dir,
+                    user_requested=args.user_requested,
+                    request_reason=args.request_reason,
                 )
             )
             return
