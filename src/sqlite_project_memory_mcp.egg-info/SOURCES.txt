@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/sqlite_mcp_server/__init__.py
+src/sqlite_mcp_server/__main__.py
+src/sqlite_mcp_server/db.py
+src/sqlite_mcp_server/server.py
+src/sqlite_project_memory_mcp.egg-info/PKG-INFO
+src/sqlite_project_memory_mcp.egg-info/SOURCES.txt
+src/sqlite_project_memory_mcp.egg-info/dependency_links.txt
+src/sqlite_project_memory_mcp.egg-info/entry_points.txt
+src/sqlite_project_memory_mcp.egg-info/requires.txt
+src/sqlite_project_memory_mcp.egg-info/top_level.txt

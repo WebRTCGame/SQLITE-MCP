@@ -1,0 +1,2 @@
+[console_scripts]
+sqlite-project-memory-mcp = sqlite_mcp_server.server:main

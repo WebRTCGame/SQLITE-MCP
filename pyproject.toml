@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sqlite-project-memory-mcp"
+version = "0.1.0"
+description = "SQLite-backed MCP server for graph-oriented project memory"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[project.scripts]
+sqlite-project-memory-mcp = "sqlite_mcp_server.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
