@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from collections.abc import Callable
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from functools import wraps
+from inspect import iscoroutinefunction
 from pathlib import Path
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -25,13 +32,254 @@ class AppContext:
     db: DatabaseManager
 
 
+class _JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "timestamp": datetime.fromtimestamp(record.created, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "level": record.levelname.lower(),
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for key in (
+            "event",
+            "tool_name",
+            "call_id",
+            "status",
+            "elapsed_ms",
+            "response_bytes",
+            "transport",
+            "database_path",
+            "error_type",
+        ):
+            value = getattr(record, key, None)
+            if value is not None:
+                payload[key] = value
+        return json.dumps(payload, sort_keys=True)
+
+
+def _log_level() -> str:
+    return os.getenv("SQLITE_MCP_LOG_LEVEL", "INFO").strip().upper() or "INFO"
+
+
+def _log_format() -> str:
+    return os.getenv("SQLITE_MCP_LOG_FORMAT", "json").strip().lower() or "json"
+
+
+def _configure_logger() -> logging.Logger:
+    logger = logging.getLogger("sqlite_mcp_server")
+    level_name = _log_level()
+    level = getattr(logging, level_name, logging.INFO)
+    logger.setLevel(level)
+    logger.propagate = False
+
+    format_name = _log_format()
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        if format_name == "text":
+            handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s %(levelname)s %(name)s %(message)s",
+                    datefmt="%Y-%m-%dT%H:%M:%SZ",
+                )
+            )
+        else:
+            handler.setFormatter(_JsonLogFormatter())
+        logger.addHandler(handler)
+    return logger
+
+
+SERVER_LOGGER = _configure_logger()
+
+
+def _estimate_response_bytes(payload: Any) -> int:
+    try:
+        return len(json.dumps(payload, default=str))
+    except TypeError:
+        return len(str(payload))
+
+
+def _run_logged_call(
+    tool_name: str,
+    action: Callable[[], Any],
+    *,
+    logger: logging.Logger | None = None,
+    database_path: str | None = None,
+) -> Any:
+    active_logger = logger or SERVER_LOGGER
+    transport = os.getenv("SQLITE_MCP_TRANSPORT", "stdio").strip().lower() or "stdio"
+    call_id = uuid4().hex[:12]
+    active_logger.info(
+        "tool.start",
+        extra={
+            "event": "tool.start",
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "transport": transport,
+            "database_path": database_path,
+        },
+    )
+    started_at = perf_counter()
+    try:
+        result = action()
+    except Exception as exc:
+        elapsed_ms = round((perf_counter() - started_at) * 1000, 3)
+        active_logger.error(
+            "tool.error",
+            exc_info=True,
+            extra={
+                "event": "tool.error",
+                "tool_name": tool_name,
+                "call_id": call_id,
+                "status": "error",
+                "elapsed_ms": elapsed_ms,
+                "transport": transport,
+                "database_path": database_path,
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise
+
+    elapsed_ms = round((perf_counter() - started_at) * 1000, 3)
+    active_logger.info(
+        "tool.finish",
+        extra={
+            "event": "tool.finish",
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "status": "ok",
+            "elapsed_ms": elapsed_ms,
+            "response_bytes": _estimate_response_bytes(result),
+            "transport": transport,
+            "database_path": database_path,
+        },
+    )
+    return result
+
+
+async def _run_logged_async_call(
+    tool_name: str,
+    action: Callable[[], Any],
+    *,
+    logger: logging.Logger | None = None,
+    database_path: str | None = None,
+) -> Any:
+    active_logger = logger or SERVER_LOGGER
+    transport = os.getenv("SQLITE_MCP_TRANSPORT", "stdio").strip().lower() or "stdio"
+    call_id = uuid4().hex[:12]
+    active_logger.info(
+        "tool.start",
+        extra={
+            "event": "tool.start",
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "transport": transport,
+            "database_path": database_path,
+        },
+    )
+    started_at = perf_counter()
+    try:
+        result = await action()
+    except Exception as exc:
+        elapsed_ms = round((perf_counter() - started_at) * 1000, 3)
+        active_logger.error(
+            "tool.error",
+            exc_info=True,
+            extra={
+                "event": "tool.error",
+                "tool_name": tool_name,
+                "call_id": call_id,
+                "status": "error",
+                "elapsed_ms": elapsed_ms,
+                "transport": transport,
+                "database_path": database_path,
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise
+
+    elapsed_ms = round((perf_counter() - started_at) * 1000, 3)
+    active_logger.info(
+        "tool.finish",
+        extra={
+            "event": "tool.finish",
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "status": "ok",
+            "elapsed_ms": elapsed_ms,
+            "response_bytes": _estimate_response_bytes(result),
+            "transport": transport,
+            "database_path": database_path,
+        },
+    )
+    return result
+
+
+def _instrumented_tool(*tool_args: Any, **tool_kwargs: Any) -> Callable[[Callable[..., Any]], Any]:
+    base_decorator = FastMCP.tool(mcp, *tool_args, **tool_kwargs)
+
+    def decorator(func: Callable[..., Any]) -> Any:
+        tool_name = tool_kwargs.get("name") or func.__name__
+
+        def _database_path_from_call(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
+            ctx = kwargs.get("ctx")
+            if ctx is None and args:
+                ctx = args[-1]
+            if ctx is None:
+                return None
+            try:
+                return str(_db(ctx).db_path)
+            except Exception:
+                return None
+
+        if iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                database_path = _database_path_from_call(args, kwargs)
+                return await _run_logged_async_call(
+                    tool_name,
+                    lambda: func(*args, **kwargs),
+                    database_path=database_path,
+                )
+
+            return base_decorator(async_wrapper)
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            database_path = _database_path_from_call(args, kwargs)
+            return _run_logged_call(
+                tool_name,
+                lambda: func(*args, **kwargs),
+                database_path=database_path,
+            )
+
+        return base_decorator(wrapper)
+
+    return decorator
+
+
 @asynccontextmanager
 async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     db = DatabaseManager(_default_db_path())
     db.connect()
+    SERVER_LOGGER.info(
+        "server.start",
+        extra={
+            "event": "server.start",
+            "transport": os.getenv("SQLITE_MCP_TRANSPORT", "stdio").strip().lower() or "stdio",
+            "database_path": str(db.db_path),
+        },
+    )
     try:
         yield AppContext(db=db)
     finally:
+        SERVER_LOGGER.info(
+            "server.stop",
+            extra={
+                "event": "server.stop",
+                "transport": os.getenv("SQLITE_MCP_TRANSPORT", "stdio").strip().lower() or "stdio",
+                "database_path": str(db.db_path),
+            },
+        )
         db.close()
 
 
@@ -46,6 +294,8 @@ mcp = FastMCP(
     lifespan=app_lifespan,
     json_response=True,
 )
+
+mcp.tool = _instrumented_tool  # type: ignore[method-assign]
 
 
 def _db(ctx: Context) -> DatabaseManager:
@@ -67,6 +317,12 @@ def server_info(ctx: Context) -> dict[str, Any]:
         "name": ctx.fastmcp.name,
         "database_path": str(db.db_path),
         "transport_hint": os.getenv("SQLITE_MCP_TRANSPORT", "stdio"),
+        "logging": {
+            "level": _log_level().lower(),
+            "format": _log_format(),
+            "request_timing": True,
+            "destination": "stderr",
+        },
         "schema": db.schema_overview(),
     }
 
