@@ -1982,7 +1982,7 @@ class DatabaseManager:
         for entity in self._fetch_all(
             "SELECT id, type, name, status FROM entities WHERE status IS NOT NULL ORDER BY updated_at DESC, id ASC"
         ):
-            allowed_statuses = COMMON_STATUS_VOCABULARY.get(entity["type"], COMMON_STATUS_VOCABULARY["*"])
+            allowed_statuses = COMMON_STATUS_VOCABULARY["*"] | COMMON_STATUS_VOCABULARY.get(entity["type"], set())
             if entity["status"] not in allowed_statuses:
                 invalid_statuses.append(
                     {
@@ -2360,6 +2360,45 @@ class DatabaseManager:
             for view_name in unique_requested
         }
 
+    def export_markdown_views(
+        self,
+        output_dir: Path | str,
+        view_names: list[str] | None = None,
+        overwrite: bool = False,
+        require_existing_dir: bool = False,
+    ) -> dict[str, Any]:
+        export_dir = Path(output_dir).expanduser().resolve()
+        if export_dir.exists() and not export_dir.is_dir():
+            raise ValidationError(f"output_dir must be a directory; got file path {str(export_dir)!r}")
+        if require_existing_dir and not export_dir.exists():
+            raise ValidationError(
+                f"output_dir must already exist when require_existing_dir=True; got {str(export_dir)!r}"
+            )
+
+        rendered = self.render_markdown_views(view_names=view_names)
+        targets = {file_name: export_dir / file_name for file_name in rendered}
+        existing_files = [str(target) for target in targets.values() if target.exists()]
+        if existing_files and not overwrite:
+            raise ValidationError(
+                "refusing to overwrite existing exported view files without overwrite=True: "
+                + ", ".join(sorted(existing_files))
+            )
+
+        export_dir.mkdir(parents=True, exist_ok=True)
+        written_files: list[str] = []
+        for file_name, body in rendered.items():
+            target = targets[file_name]
+            target.write_text(body + ("\n" if not body.endswith("\n") else ""), encoding="utf-8")
+            written_files.append(str(target))
+
+        return {
+            "output_dir": str(export_dir),
+            "view_count": len(written_files),
+            "written_files": written_files,
+            "overwritten_files": sorted(existing_files),
+            "overwrite": overwrite,
+        }
+
     def _wrap_markdown_view(self, view_name: str, generated_at: str, body: str) -> str:
         descriptions = {
             "overview": "Generated project memory overview from the SQLite source of truth.",
@@ -2422,6 +2461,7 @@ class DatabaseManager:
             FROM entities e
             LEFT JOIN attributes a ON a.entity_id = e.id
             WHERE e.type IN ('task', 'todo', 'bug')
+                            AND COALESCE(e.status, '') != 'archived'
               AND NOT EXISTS (
                   SELECT 1 FROM relationships mr
                   WHERE mr.to_entity = e.id AND mr.type = 'has_memory_area'
@@ -2493,6 +2533,7 @@ class DatabaseManager:
             SELECT e.id, e.name, e.status, e.description
             FROM entities e
             WHERE e.type = 'decision'
+                            AND COALESCE(e.status, '') != 'archived'
               AND EXISTS (SELECT 1 FROM tags t WHERE t.entity_id = e.id AND t.tag = 'open-decision')
             ORDER BY e.name ASC, e.id ASC
             """
@@ -2510,6 +2551,7 @@ class DatabaseManager:
             FROM entities e
             LEFT JOIN attributes a ON a.entity_id = e.id
             WHERE e.type = 'phase'
+                            AND COALESCE(e.status, '') != 'archived'
             GROUP BY e.id, e.type, e.name, e.status, e.description, e.updated_at
             ORDER BY
                 CASE

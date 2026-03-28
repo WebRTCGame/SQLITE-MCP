@@ -117,12 +117,14 @@ For local bootstrap and inspection workflows, the package also exposes an admin 
 sqlite-project-memory-admin bootstrap-self --repo-root .
 sqlite-project-memory-admin project-state
 sqlite-project-memory-admin health
-sqlite-project-memory-admin export-views todo roadmap architecture
+sqlite-project-memory-admin export-views --require-existing-dir exports todo roadmap architecture
+sqlite-project-memory-admin export-views --force todo roadmap architecture
 sqlite-project-memory-admin export-json --output-path exports/project_memory.snapshot.json
 sqlite-project-memory-admin import-json --input-path exports/project_memory.snapshot.json
 ```
 
 This is mainly useful when you want the project to use its own SQLite memory store without writing one-off scripts.
+Generated markdown export is safe by default: it refuses to overwrite existing view files unless `--force` is provided, and `--require-existing-dir` can be used when automation should fail instead of creating a new output directory.
 
 ## Sample MCP Config
 
@@ -166,6 +168,8 @@ If this server is going to be called frequently by an AI, the useful surface is 
 - `get_recent_activity` so an AI can resume context quickly after a new session.
 - `run_read_query` for controlled read-only analytics when the built-in tools are not enough.
 - `render_markdown_views` and `export_markdown_views` when human-readable `todo`, `roadmap`, `plan`, `architecture`, `decisions`, or `notes` files are needed.
+
+`export_markdown_views` also supports explicit overwrite control so generated documents do not silently replace existing files.
 
 The intended pattern is:
 

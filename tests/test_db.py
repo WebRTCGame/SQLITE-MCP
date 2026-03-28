@@ -99,6 +99,32 @@ def test_render_markdown_views_uses_database_as_source_of_truth(db: DatabaseMana
     assert "Project Memory Overview" in rendered["overview.md"]
 
 
+def test_export_markdown_views_requires_explicit_overwrite_and_can_require_existing_dir(
+    db: DatabaseManager,
+    tmp_path: Path,
+) -> None:
+    db.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+
+    missing_dir = tmp_path / "missing-exports"
+    with pytest.raises(ValidationError):
+        db.export_markdown_views(missing_dir, view_names=["todo"], require_existing_dir=True)
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    existing_target = export_dir / "todo.md"
+    existing_target.write_text("old content\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        db.export_markdown_views(export_dir, view_names=["todo"])
+
+    result = db.export_markdown_views(export_dir, view_names=["todo"], overwrite=True)
+
+    assert result["view_count"] == 1
+    assert result["overwrite"] is True
+    assert str(existing_target) in result["overwritten_files"]
+    assert existing_target.read_text(encoding="utf-8").startswith("<!-- Generated file: do not edit manually. -->")
+
+
 def test_schema_overview_reports_schema_version_and_relationship_policy(db: DatabaseManager) -> None:
     overview = db.schema_overview()
 

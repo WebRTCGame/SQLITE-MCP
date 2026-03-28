@@ -87,23 +87,53 @@ Acceptance criteria:
         manager.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
 
         first = _sync_roadmap(manager, roadmap_path)
+
+        roadmap_path.write_text(
+    """# Sample Roadmap
+
+## Goal
+
+Finish the SQLite-backed project memory MCP.
+
+## Current State
+
+Already implemented:
+
+- Generic graph-friendly schema.
+
+## Phase 5: Content Migration
+
+Objective: move the remaining hand-maintained markdown into structured memory.
+
+Tasks:
+
+- Sync remaining human-authored notes into SQLite.
+
+Acceptance criteria:
+
+- Generated roadmap output only reflects the current roadmap source.
+""",
+            encoding="utf-8",
+        )
         second = _sync_roadmap(manager, roadmap_path)
 
         assert first["phase_count"] == 1
         assert first["task_count"] == 2
         assert first["open_decision_count"] == 1
         assert first["section_count"] >= 2
-        assert second["task_count"] == 2
+        assert second["task_count"] == 1
+        assert "phase.4.compact-contracts-and-controlled-vocabularies" in second["archived_ids"]
+        assert "decision.canonical-entity-id-format" in second["archived_ids"]
 
         phase = manager.get_entity("phase.4.compact-contracts-and-controlled-vocabularies", include_related=True)
-        assert phase["description"] == "improve AI efficiency without redesigning the storage model."
+        assert phase["status"] == "archived"
         assert any(item["content_type"] == "spec" for item in phase["content"])
 
-        task = manager.get_entity(first["task_ids"][0], include_related=True)
+        task = manager.get_entity(second["task_ids"][0], include_related=True)
         assert task["status"] == "planned"
 
         decision = manager.get_entity("decision.canonical-entity-id-format", include_related=True)
-        assert decision["status"] == "draft"
+        assert decision["status"] == "archived"
 
         health = manager.get_database_health(limit=10)
         assert health["issue_counts"]["invalid_statuses"] == 0
@@ -113,9 +143,11 @@ Acceptance criteria:
         assert "[file] roadmap.md" not in rendered["roadmap.md"]
         assert "## Goal" in rendered["roadmap.md"]
         assert "Finish the SQLite-backed project memory MCP." in rendered["roadmap.md"]
-        assert "## Open Decisions" in rendered["roadmap.md"]
-        assert "## Phase 4: Compact Contracts And Controlled Vocabularies" in rendered["roadmap.md"]
+        assert "## Open Decisions" not in rendered["roadmap.md"]
+        assert "## Phase 4: Compact Contracts And Controlled Vocabularies" not in rendered["roadmap.md"]
+        assert "## Phase 5: Content Migration" in rendered["roadmap.md"]
         assert "### Tasks" in rendered["roadmap.md"]
-        assert "## Phase 4" in rendered["todo.md"]
+        assert "## Phase 4" not in rendered["todo.md"]
+        assert "## Phase 5" in rendered["todo.md"]
     finally:
         manager.close()

@@ -354,6 +354,28 @@ def _sync_roadmap(manager: DatabaseManager, roadmap_path: Path) -> dict[str, Any
         manager.connect_entities(roadmap_entity_id, decision_id, "tracks")
         synced_decision_ids.append(decision_id)
 
+    tracked_roadmap_entities = {
+        "phase": (synced_phase_ids, "Roadmap phase removed from roadmap.md"),
+        "task": (synced_task_ids, "Roadmap task removed from roadmap.md"),
+        "decision": (synced_decision_ids, "Open roadmap decision removed from roadmap.md"),
+    }
+    archived_ids: list[str] = []
+    for entity_type, (active_ids, reason) in tracked_roadmap_entities.items():
+        existing_entities = manager.list_entities(
+            entity_type=entity_type,
+            attribute_key="source",
+            attribute_value="roadmap.md",
+            limit=200,
+        )
+        stale_ids = sorted(
+            entity["id"]
+            for entity in existing_entities
+            if entity["id"] not in active_ids and entity.get("status") != "archived"
+        )
+        for entity_id in stale_ids:
+            manager.archive_entity(entity_id, reason=reason)
+            archived_ids.append(entity_id)
+
     return {
         "roadmap_path": str(roadmap_path),
         "section_count": sum(1 for lines in roadmap_sections.values() if any(line.strip() for line in lines)),
@@ -363,6 +385,7 @@ def _sync_roadmap(manager: DatabaseManager, roadmap_path: Path) -> dict[str, Any
         "phase_ids": synced_phase_ids,
         "task_ids": synced_task_ids,
         "open_decision_ids": synced_decision_ids,
+        "archived_ids": archived_ids,
         "project_state": manager.get_project_state(limit=10),
     }
 
@@ -396,6 +419,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write generated markdown views from the database.",
     )
     export_views.add_argument("--output-dir", type=Path, default=_default_export_dir())
+    export_views.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow overwriting existing generated view files.",
+    )
+    export_views.add_argument(
+        "--require-existing-dir",
+        action="store_true",
+        help="Fail instead of creating the output directory when it does not already exist.",
+    )
     export_views.add_argument("views", nargs="*", default=None)
 
     export_json = subparsers.add_parser(
@@ -438,20 +471,13 @@ def main() -> None:
             return
 
         if args.command == "export-views":
-            rendered = manager.render_markdown_views(view_names=args.views)
-            output_dir = args.output_dir.resolve()
-            output_dir.mkdir(parents=True, exist_ok=True)
-            written_files: list[str] = []
-            for file_name, body in rendered.items():
-                target = output_dir / file_name
-                target.write_text(body + ("\n" if not body.endswith("\n") else ""), encoding="utf-8")
-                written_files.append(str(target))
             _print_json(
-                {
-                    "output_dir": str(output_dir),
-                    "view_count": len(written_files),
-                    "written_files": written_files,
-                }
+                manager.export_markdown_views(
+                    output_dir=args.output_dir.resolve(),
+                    view_names=args.views,
+                    overwrite=args.force,
+                    require_existing_dir=args.require_existing_dir,
+                )
             )
             return
 

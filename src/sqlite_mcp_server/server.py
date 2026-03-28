@@ -594,25 +594,19 @@ def render_markdown_views(
 def export_markdown_views(
     view_names: list[str] | None = None,
     output_dir: str | None = None,
+    overwrite: bool = False,
+    require_existing_dir: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Write generated markdown view files to disk so humans can consume exported project documents."""
     assert ctx is not None
-    rendered = _db(ctx).render_markdown_views(view_names=view_names)
     export_dir = Path(output_dir).expanduser().resolve() if output_dir else _default_exports_dir()
-    export_dir.mkdir(parents=True, exist_ok=True)
-
-    written_files: list[str] = []
-    for file_name, body in rendered.items():
-        target = export_dir / file_name
-        target.write_text(body + ("\n" if not body.endswith("\n") else ""), encoding="utf-8")
-        written_files.append(str(target))
-
-    return {
-        "output_dir": str(export_dir),
-        "written_files": written_files,
-        "view_count": len(written_files),
-    }
+    return _db(ctx).export_markdown_views(
+        output_dir=export_dir,
+        view_names=view_names,
+        overwrite=overwrite,
+        require_existing_dir=require_existing_dir,
+    )
 
 
 @mcp.resource("memory://schema")
