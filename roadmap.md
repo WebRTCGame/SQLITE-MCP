@@ -102,8 +102,6 @@ Objective: make the finished core easier to operate, observe, and trust over lon
 
 Tasks:
 
-- Add structured logging and basic request timing.
-- Add clearer operational docs for environment variables, database location, and transport choice.
 - Add response-size safeguards and pagination limits where they are still missing.
 - Decide whether high-frequency read tools should default to compact mode.
 
@@ -119,8 +117,6 @@ Objective: finish moving remaining hand-maintained project documents into DB-bac
 
 Tasks:
 
-- Add structured migration paths for architecture, decisions, notes, and plan content.
-- Improve generated `architecture`, `decisions`, `notes`, and `plan` views to the same level now reached by `roadmap` and `todo`.
 - Decide when `roadmap.md` stops being a maintained source file and becomes generated-only.
 - Define the cutoff for removing non-README markdown files from the repo workflow.
 

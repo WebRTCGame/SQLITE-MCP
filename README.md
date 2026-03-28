@@ -119,6 +119,8 @@ sqlite-project-memory-admin project-state
 sqlite-project-memory-admin health
 sqlite-project-memory-admin export-views --require-existing-dir exports todo roadmap architecture
 sqlite-project-memory-admin export-views --force todo roadmap architecture
+sqlite-project-memory-admin sync-document architecture --input-path architecture.md
+sqlite-project-memory-admin sync-document decisions --input-path decisions.md
 sqlite-project-memory-admin export-json --output-path exports/project_memory.snapshot.json
 sqlite-project-memory-admin import-json --input-path exports/project_memory.snapshot.json
 ```
@@ -137,6 +139,8 @@ Environment variables:
 - `SQLITE_MCP_DB_PATH`: override the SQLite database file path.
 - `SQLITE_MCP_TRANSPORT`: `stdio` or `streamable-http`.
 - `SQLITE_MCP_EXPORT_DIR`: default output directory for generated markdown views.
+- `SQLITE_MCP_LOG_LEVEL`: log level for server lifecycle and tool request logs. Defaults to `INFO`.
+- `SQLITE_MCP_LOG_FORMAT`: `json` or `text` for stderr logs. Defaults to `json`.
 
 Example:
 
@@ -170,6 +174,8 @@ If this server is going to be called frequently by an AI, the useful surface is 
 - `render_markdown_views` and `export_markdown_views` when human-readable `todo`, `roadmap`, `plan`, `architecture`, `decisions`, or `notes` files are needed.
 
 `export_markdown_views` also supports explicit overwrite control so generated documents do not silently replace existing files.
+
+For the remaining human-facing documents, `sync-document` provides a structured migration path into the anchor memory areas for `architecture`, `decisions`, `plan`, and `notes`. The generated views then combine that synced document content with the structured SQLite state instead of rendering a flat dump.
 
 The intended pattern is:
 

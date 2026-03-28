@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlite_mcp_server.cli import _bootstrap_self, _sync_roadmap
+from sqlite_mcp_server.cli import _bootstrap_self, _sync_document, _sync_roadmap
 from sqlite_mcp_server.db import DatabaseManager
 
 
@@ -149,5 +149,30 @@ Acceptance criteria:
         assert "### Tasks" in rendered["roadmap.md"]
         assert "## Phase 4" not in rendered["todo.md"]
         assert "## Phase 5" in rendered["todo.md"]
+    finally:
+        manager.close()
+
+
+def test_sync_document_updates_memory_area_anchor_and_rendered_view(tmp_path: Path) -> None:
+    manager = DatabaseManager(tmp_path / "memory.db")
+    manager.connect()
+    try:
+        manager.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+        input_path = tmp_path / "architecture.md"
+        input_path.write_text(
+            "# Architecture Notes\n\nThe MCP server centers authoritative state in SQLite.\n",
+            encoding="utf-8",
+        )
+
+        result = _sync_document(manager, "architecture", input_path)
+
+        assert result["entity_id"] == "project.sqlite-mcp.architecture"
+        anchor = manager.get_entity("project.sqlite-mcp.architecture", include_related=True)
+        assert anchor["attributes"]["source_path"] == str(input_path.resolve())
+        assert any(item["id"] == "document.architecture.current" for item in anchor["content"])
+
+        rendered = manager.render_markdown_views(["architecture"])
+        assert "## Current Architecture Document" in rendered["architecture.md"]
+        assert "The MCP server centers authoritative state in SQLite." in rendered["architecture.md"]
     finally:
         manager.close()

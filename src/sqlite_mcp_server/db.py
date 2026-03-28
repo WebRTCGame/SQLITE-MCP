@@ -40,6 +40,28 @@ COMMON_STATUS_VOCABULARY = {
 }
 LOW_SIGNAL_ATTRIBUTE_VALUES = {"?", "n/a", "none", "temp", "tbd", "todo", "unknown"}
 RETENTION_CONTENT_TYPES = {"log", "reasoning"}
+DOCUMENT_TARGETS = {
+    "architecture": {
+        "entity_type": "architecture",
+        "content_id": "document.architecture.current",
+        "content_type": "spec",
+    },
+    "decisions": {
+        "entity_type": "decision_log",
+        "content_id": "document.decisions.current",
+        "content_type": "analysis",
+    },
+    "plan": {
+        "entity_type": "plan",
+        "content_id": "document.plan.current",
+        "content_type": "spec",
+    },
+    "notes": {
+        "entity_type": "notes",
+        "content_id": "document.notes.current",
+        "content_type": "note",
+    },
+}
 
 
 class ValidationError(ValueError):
@@ -1112,6 +1134,7 @@ class DatabaseManager:
                 MAX(CASE WHEN a.key = 'rank' THEN a.value END) AS rank,
                 MAX(CASE WHEN a.key = 'priority' THEN a.value END) AS priority,
                 MAX(CASE WHEN a.key = 'owner' THEN a.value END) AS owner,
+                MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS phase_number,
                 SUM(CASE WHEN r.type = 'depends_on' AND r.from_entity = e.id THEN 1 ELSE 0 END) AS dependency_count,
                 SUM(CASE WHEN r.type = 'blocks' AND r.to_entity = e.id THEN 1 ELSE 0 END) AS blocker_count
             FROM entities e
@@ -2417,6 +2440,59 @@ class DatabaseManager:
         ]
         return "\n".join(header_lines) + body.lstrip()
 
+    def _memory_area(self, target: str) -> dict[str, Any] | None:
+        config = DOCUMENT_TARGETS[target]
+        return self._fetch_one(
+            """
+            SELECT DISTINCT e.id, e.type, e.name, e.description, e.status, e.updated_at
+            FROM entities e
+            LEFT JOIN relationships r ON r.to_entity = e.id AND r.type = 'has_memory_area'
+            LEFT JOIN entities p ON p.id = r.from_entity AND p.type = 'project'
+            WHERE e.type = ?
+            ORDER BY CASE WHEN p.id IS NOT NULL THEN 0 ELSE 1 END, e.updated_at DESC, e.id ASC
+            LIMIT 1
+            """,
+            (config["entity_type"],),
+        )
+
+    def _memory_area_document(self, target: str) -> dict[str, Any] | None:
+        anchor = self._memory_area(target)
+        if anchor is None:
+            return None
+        config = DOCUMENT_TARGETS[target]
+        document = self._fetch_one(
+            "SELECT id, content_type, body, created_at FROM content WHERE id = ? AND entity_id = ?",
+            (config["content_id"], anchor["id"]),
+        )
+        if document is not None:
+            return document
+        return self._fetch_one(
+            """
+            SELECT id, content_type, body, created_at
+            FROM content
+            WHERE entity_id = ? AND content_type IN ('spec', 'analysis', 'note')
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (anchor["id"],),
+        )
+
+    def _append_document_section(
+        self,
+        lines: list[str],
+        heading: str,
+        document: dict[str, Any] | None,
+        empty_message: str,
+    ) -> None:
+        lines.append(f"## {heading}")
+        lines.append("")
+        if document is None or not document.get("body"):
+            lines.append(f"- {empty_message}")
+            lines.append("")
+            return
+        lines.extend(document["body"].strip().splitlines())
+        lines.append("")
+
     def _render_overview_view(self) -> str:
         overview = self.get_project_overview()
         lines = ["# Project Memory Overview", ""]
@@ -2638,121 +2714,152 @@ class DatabaseManager:
         return "\n".join(lines)
 
     def _render_architecture_view(self) -> str:
-        nodes = self._fetch_all(
-            """
-            SELECT id, type, name, description, status
-            FROM entities
-            WHERE type IN ('architecture', 'module', 'component', 'service', 'file')
-            ORDER BY type ASC, id ASC
-            LIMIT 200
-            """
+        summary = self.get_architecture_summary(node_limit=40, relationship_limit=60)
+        document = self._memory_area_document("architecture")
+        lines = ["# Architecture", "", "Source of truth: SQLite project memory.", ""]
+        self._append_document_section(
+            lines,
+            "Current Architecture Document",
+            document,
+            "No architecture document content has been synced yet.",
         )
-        edges = self._fetch_all(
-            """
-            SELECT from_entity, to_entity, type
-            FROM relationships
-            WHERE type IN ('depends_on', 'implements', 'calls', 'owns', 'contains')
-            ORDER BY type ASC, from_entity ASC, to_entity ASC
-            LIMIT 300
-            """
-        )
-        lines = ["# Architecture", ""]
-        lines.append("## Nodes")
+        lines.append("## Summary")
         lines.append("")
-        if not nodes:
+        lines.append(f"- Nodes: {summary['node_count']}")
+        lines.append(f"- Relationships: {summary['relationship_count']}")
+        for node_type in summary["node_types"]:
+            lines.append(f"- {node_type['type']}: {node_type['count']}")
+        lines.append("")
+        lines.append("## Key Nodes")
+        lines.append("")
+        if not summary["nodes"]:
             lines.append("- No architecture-like entities recorded.")
-        for node in nodes:
+        for node in summary["nodes"]:
             title = node["name"] or node["id"]
             lines.append(f"- [{node['type']}] {title} ({node['status'] or 'unknown'})")
         lines.append("")
-        lines.append("## Relationships")
+        lines.append("## Key Relationships")
         lines.append("")
-        if not edges:
+        if not summary["relationships"]:
             lines.append("- No architecture-like relationships recorded.")
-        for edge in edges:
+        for edge in summary["relationships"]:
             lines.append(f"- {edge['from_entity']} -[{edge['type']}]-> {edge['to_entity']}")
         lines.append("")
         return "\n".join(lines)
 
     def _render_decisions_view(self) -> str:
-        decisions = self._fetch_all(
-            """
-            SELECT e.id, e.name, e.status, e.updated_at, e.description
-            FROM entities e
-            WHERE e.type IN ('decision', 'decision_log')
-            ORDER BY e.updated_at DESC, e.id ASC
-            """
+        summary = self.get_decision_log(limit=50)
+        document = self._memory_area_document("decisions")
+        decisions = [item for item in summary["items"] if item["type"] == "decision" and item["status"] != "archived"]
+        lines = ["# Decisions", "", "Source of truth: SQLite project memory.", ""]
+        self._append_document_section(
+            lines,
+            "Current Decision Document",
+            document,
+            "No decision document content has been synced yet.",
         )
-        lines = ["# Decisions", ""]
         if not decisions:
             lines.append("- No decision entities recorded.")
             lines.append("")
             return "\n".join(lines)
+        by_status: dict[str, list[dict[str, Any]]] = {}
         for decision in decisions:
-            title = decision["name"] or decision["id"]
-            lines.append(f"## {title}")
+            by_status.setdefault(decision["status"] or "unknown", []).append(decision)
+        for status in sorted(by_status):
+            lines.append(f"## {status.title().replace('_', ' ')}")
             lines.append("")
-            lines.append(f"- Status: {decision['status'] or 'unknown'}")
-            if decision.get("description"):
-                lines.append(f"- Summary: {decision['description']}")
-            supporting_content = self._fetch_all(
-                """
-                SELECT content_type, body, created_at
-                FROM content
-                WHERE entity_id = ? AND content_type IN ('reasoning', 'analysis', 'spec', 'note')
-                ORDER BY created_at DESC
-                LIMIT 3
-                """,
-                (decision["id"],),
-            )
-            for item in supporting_content:
-                lines.append(f"- {item['content_type']}: {item['body'][:200]}")
-            lines.append("")
+            for decision in by_status[status]:
+                title = decision["name"] or decision["id"]
+                lines.append(f"### {title}")
+                lines.append("")
+                if decision.get("description"):
+                    lines.append(decision["description"])
+                    lines.append("")
+                if decision.get("latest_note"):
+                    lines.append(f"- Latest note: {decision['latest_note']}")
+                if decision.get("latest_note_at"):
+                    lines.append(f"- Latest note at: {decision['latest_note_at']}")
+                lines.append("")
         return "\n".join(lines)
 
     def _render_plan_view(self) -> str:
-        plans = self._fetch_all(
-            """
-            SELECT id, type, name, status, description, updated_at
-            FROM entities
-            WHERE type IN ('plan', 'task')
-            ORDER BY updated_at DESC, id ASC
-            LIMIT 200
-            """
+        document = self._memory_area_document("plan")
+        open_tasks = self.get_open_tasks(limit=50)["items"]
+        lines = ["# Plan", "", "Source of truth: SQLite project memory.", ""]
+        self._append_document_section(
+            lines,
+            "Current Plan Document",
+            document,
+            "No plan document content has been synced yet.",
         )
-        lines = ["# Plan", ""]
-        if not plans:
-            lines.append("- No plan-like entities recorded.")
+        lines.append("## Prioritized Open Work")
+        lines.append("")
+        if not open_tasks:
+            lines.append("- No open task-like entities recorded.")
             lines.append("")
             return "\n".join(lines)
-        for plan in plans:
-            title = plan["name"] or plan["id"]
-            suffix = f": {plan['description']}" if plan.get("description") else ""
-            lines.append(f"- [{plan['type']}] {title} ({plan['status'] or 'unknown'}){suffix}")
-        lines.append("")
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for task in open_tasks:
+            phase_number = task.get("phase_number") or "unassigned"
+            grouped.setdefault(phase_number, []).append(task)
+        for phase_key in sorted(grouped, key=lambda value: (9999 if not str(value).isdigit() else int(value), str(value))):
+            if phase_key == "unassigned":
+                lines.append("### Unassigned")
+            else:
+                lines.append(f"### Phase {phase_key}")
+            lines.append("")
+            for task in grouped[phase_key]:
+                title = task["name"] or task["id"]
+                meta = [f"status={task['status'] or 'unknown'}"]
+                if task.get("priority"):
+                    meta.append(f"priority={task['priority']}")
+                if task.get("owner"):
+                    meta.append(f"owner={task['owner']}")
+                if task.get("dependency_count"):
+                    meta.append(f"dependencies={task['dependency_count']}")
+                if task.get("blocker_count"):
+                    meta.append(f"blocked_by={task['blocker_count']}")
+                lines.append(f"- {title} ({', '.join(meta)})")
+            lines.append("")
         return "\n".join(lines)
 
     def _render_notes_view(self) -> str:
+        document = self._memory_area_document("notes")
+        protected_ids = tuple(config["content_id"] for config in DOCUMENT_TARGETS.values())
+        placeholders = ", ".join("?" for _ in protected_ids)
         notes = self._fetch_all(
-            """
+            f"""
             SELECT c.id, c.entity_id, c.content_type, c.body, c.created_at, e.name AS entity_name
             FROM content c
             JOIN entities e ON e.id = c.entity_id
             WHERE c.content_type IN ('note', 'analysis', 'reasoning', 'log', 'spec')
+              AND c.id NOT IN ({placeholders})
             ORDER BY c.created_at DESC, c.id ASC
-            LIMIT 50
-            """
+            LIMIT 24
+            """,
+            protected_ids,
         )
-        lines = ["# Notes", ""]
+        lines = ["# Notes", "", "Source of truth: SQLite project memory.", ""]
+        self._append_document_section(
+            lines,
+            "Current Notes Document",
+            document,
+            "No notes document content has been synced yet.",
+        )
+        lines.append("## Recent Narrative Entries")
+        lines.append("")
         if not notes:
             lines.append("- No note-like content recorded.")
             lines.append("")
             return "\n".join(lines)
         for note in notes:
             label = note["entity_name"] or note["entity_id"]
-            lines.append(f"## {label} [{note['content_type']}]")
+            lines.append(f"### {label} [{note['content_type']}]")
             lines.append("")
-            lines.append(note["body"])
+            body = note["body"].strip()
+            if len(body) > 400:
+                body = body[:397].rstrip() + "..."
+            lines.append(body)
             lines.append("")
         return "\n".join(lines)
 

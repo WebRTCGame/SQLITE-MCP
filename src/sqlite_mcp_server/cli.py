@@ -4,10 +4,11 @@ import argparse
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlite_mcp_server.db import DatabaseManager
+from sqlite_mcp_server.db import DOCUMENT_TARGETS, DatabaseManager, ValidationError
 
 
 def _default_db_path() -> Path:
@@ -99,6 +100,61 @@ def _upsert_content(
             "content.updated",
             {"content_id": content_id, "content_type": content_type},
         )
+
+
+def _resolve_memory_area(manager: DatabaseManager, target: str) -> dict[str, Any]:
+    if target not in DOCUMENT_TARGETS:
+        raise ValidationError(f"unsupported document target: {target!r}")
+    entity_type = DOCUMENT_TARGETS[target]["entity_type"]
+    entity = manager._fetch_one(
+        """
+        SELECT DISTINCT e.id, e.type, e.name, e.status
+        FROM entities e
+        LEFT JOIN relationships r ON r.to_entity = e.id AND r.type = 'has_memory_area'
+        LEFT JOIN entities p ON p.id = r.from_entity AND p.type = 'project'
+        WHERE e.type = ?
+        ORDER BY CASE WHEN p.id IS NOT NULL THEN 0 ELSE 1 END, e.updated_at DESC, e.id ASC
+        LIMIT 1
+        """,
+        (entity_type,),
+    )
+    if entity is None:
+        raise ValidationError(
+            f"no memory-area entity exists for target {target!r}; bootstrap project memory first"
+        )
+    return entity
+
+
+def _sync_document(manager: DatabaseManager, target: str, input_path: Path) -> dict[str, Any]:
+    resolved_path = input_path.resolve()
+    body = resolved_path.read_text(encoding="utf-8").strip()
+    if not body:
+        raise ValidationError(f"input document {str(resolved_path)!r} is empty")
+
+    config = DOCUMENT_TARGETS[target]
+    entity = _resolve_memory_area(manager, target)
+    _upsert_content(
+        manager,
+        entity["id"],
+        config["content_type"],
+        body,
+        config["content_id"],
+    )
+    manager.upsert_attributes(
+        entity["id"],
+        {
+            "source_path": str(resolved_path),
+            "source_sync_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "source_kind": "markdown",
+        },
+    )
+    return {
+        "target": target,
+        "entity_id": entity["id"],
+        "input_path": str(resolved_path),
+        "content_id": config["content_id"],
+        "content_type": config["content_type"],
+    }
 
 
 def _bootstrap_self(manager: DatabaseManager, repo_root: Path) -> dict[str, Any]:
@@ -450,6 +506,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sync_roadmap.add_argument("--roadmap-path", type=Path, default=Path.cwd() / "roadmap.md")
 
+    sync_document = subparsers.add_parser(
+        "sync-document",
+        help="Synchronize a hand-maintained markdown document into a project memory area anchor.",
+    )
+    sync_document.add_argument("target", choices=sorted(DOCUMENT_TARGETS.keys()))
+    sync_document.add_argument("--input-path", type=Path, required=True)
+
     return parser
 
 
@@ -499,6 +562,10 @@ def main() -> None:
 
         if args.command == "sync-roadmap":
             _print_json(_sync_roadmap(manager, args.roadmap_path.resolve()))
+            return
+
+        if args.command == "sync-document":
+            _print_json(_sync_document(manager, args.target, args.input_path))
             return
 
         parser.error(f"unknown command: {args.command}")

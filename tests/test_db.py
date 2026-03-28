@@ -125,6 +125,40 @@ def test_export_markdown_views_requires_explicit_overwrite_and_can_require_exist
     assert existing_target.read_text(encoding="utf-8").startswith("<!-- Generated file: do not edit manually. -->")
 
 
+def test_document_views_include_synced_anchor_content_and_structured_sections(db: DatabaseManager) -> None:
+    db.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+    db.upsert_entity("module.api", "module", name="API Layer", status="active")
+    db.upsert_entity("service.db", "service", name="DB Service", status="active")
+    db.connect_entities("module.api", "service.db", "depends_on")
+    db.upsert_entity("decision.schema", "decision", name="Schema direction", status="accepted")
+    db.append_content("decision.schema", "reasoning", "Prefer compact contracts before storage redesign.")
+    db.upsert_entity(
+        "task.logging",
+        "task",
+        name="Add structured logging",
+        status="pending",
+        attributes={"phase_number": "4", "priority": "high"},
+    )
+    db.append_content("project.sqlite-mcp.architecture", "spec", "Current architecture document.", content_id="document.architecture.current")
+    db.append_content("project.sqlite-mcp.decisions", "analysis", "Current decision log document.", content_id="document.decisions.current")
+    db.append_content("project.sqlite-mcp.plan", "spec", "Current implementation plan.", content_id="document.plan.current")
+    db.append_content("project.sqlite-mcp.notes", "note", "Current notes document.", content_id="document.notes.current")
+    db.append_content("task.logging", "analysis", "Investigate stderr-safe logging for stdio transport.")
+
+    rendered = db.render_markdown_views(["architecture", "decisions", "plan", "notes"])
+
+    assert "## Current Architecture Document" in rendered["architecture.md"]
+    assert "Current architecture document." in rendered["architecture.md"]
+    assert "## Summary" in rendered["architecture.md"]
+    assert "## Accepted" in rendered["decisions.md"]
+    assert "Current decision log document." in rendered["decisions.md"]
+    assert "## Prioritized Open Work" in rendered["plan.md"]
+    assert "Current implementation plan." in rendered["plan.md"]
+    assert "## Recent Narrative Entries" in rendered["notes.md"]
+    assert "Current notes document." in rendered["notes.md"]
+    assert "Investigate stderr-safe logging for stdio transport." in rendered["notes.md"]
+
+
 def test_schema_overview_reports_schema_version_and_relationship_policy(db: DatabaseManager) -> None:
     overview = db.schema_overview()
 

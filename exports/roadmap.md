@@ -1,6 +1,6 @@
 <!-- Generated file: do not edit manually. -->
 <!-- Description: Generated roadmap summary derived from structured SQLite project memory. -->
-<!-- Generated at: 2026-03-28 13:37:15 UTC -->
+<!-- Generated at: 2026-03-28 13:44:47 UTC -->
 # Roadmap
 
 ## Goal
@@ -129,9 +129,9 @@ For the current repository, the core of this definition is already satisfied. Th
 
 ### Tasks
 
-- Add clearer operational docs for environment variables, database location, and transport choice. (planned): Roadmap task for Phase 4.
+- Add clearer operational docs for environment variables, database location, and transport choice. (archived): Roadmap task for Phase 4.
 - Add response-size safeguards and pagination limits where they are still missing. (planned): Roadmap task for Phase 4.
-- Add structured logging and basic request timing. (planned): Roadmap task for Phase 4.
+- Add structured logging and basic request timing. (archived): Roadmap task for Phase 4.
 - Decide whether high-frequency read tools should default to compact mode. (planned): Roadmap task for Phase 4.
 
 ## Phase 5: Content Migration
@@ -144,10 +144,10 @@ For the current repository, the core of this definition is already satisfied. Th
 
 ### Tasks
 
-- Add structured migration paths for architecture, decisions, notes, and plan content. (planned): Roadmap task for Phase 5.
+- Add structured migration paths for architecture, decisions, notes, and plan content. (archived): Roadmap task for Phase 5.
 - Decide when `roadmap.md` stops being a maintained source file and becomes generated-only. (planned): Roadmap task for Phase 5.
 - Define the cutoff for removing non-README markdown files from the repo workflow. (planned): Roadmap task for Phase 5.
-- Improve generated `architecture`, `decisions`, `notes`, and `plan` views to the same level now reached by `roadmap` and `todo`. (planned): Roadmap task for Phase 5.
+- Improve generated `architecture`, `decisions`, `notes`, and `plan` views to the same level now reached by `roadmap` and `todo`. (archived): Roadmap task for Phase 5.
 
 ## Phase 6: Broader Acceptance Coverage
 
