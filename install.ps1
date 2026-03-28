@@ -78,6 +78,30 @@ $venvPython = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $dbPath = Join-Path $projectRoot 'data\project_memory.db'
 $exportDir = Join-Path $projectRoot 'exports'
 
+# Create project-local workspace MCP config in .vscode/mcp.json to keep settings scoped
+$workspaceMcpDir = Join-Path $projectRoot '.vscode'
+if (-Not (Test-Path $workspaceMcpDir)) {
+    New-Item -ItemType Directory -Path $workspaceMcpDir | Out-Null
+}
+$workspaceMcpConfig = Join-Path $workspaceMcpDir 'mcp.json'
+$workspaceEntry = [pscustomobject]@{
+    servers = [pscustomobject]@{
+        'sqlite-project-memory' = [pscustomobject]@{
+            type = 'stdio'
+            command = $venvPython
+            args = @('-m', 'sqlite_mcp_server')
+            env = [ordered]@{
+                SQLITE_MCP_TRANSPORT = 'stdio'
+                SQLITE_MCP_DB_PATH = 'data/project_memory.db'
+                SQLITE_MCP_EXPORT_DIR = 'exports'
+            }
+        }
+    }
+    inputs = @()
+}
+$workspaceEntry | ConvertTo-Json -Depth 10 | Set-Content -Path $workspaceMcpConfig -Encoding UTF8
+Write-Host "Created workspace MCP config at $workspaceMcpConfig"
+
 $serverEntry = [pscustomobject]@{
     type = 'stdio'
     command = $venvPython
