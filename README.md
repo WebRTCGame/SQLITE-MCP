@@ -47,7 +47,7 @@ The server also creates an FTS5 index for `content.body` when available.
 - `update_entity`
 - `get_entity`
 - `list_entities`
-- `project_summary` is now provided through `query_view(view_name='project_summary')` (SQL view) and is deprecated as direct helper.
+- `query_view` for all summary/projection reads
 - `find_similar_entities`
 - `resolve_entity_by_name`
 - `get_or_create_entity`
@@ -56,8 +56,7 @@ The server also creates an FTS5 index for `content.body` when available.
 - `add_relationship`
 - `connect_entities`
 - `list_relationships`
-- `add_content`
-- `append_content`
+- `write_content`
 - `search_content`
 - `create_snapshot`
 - `get_snapshot`
@@ -185,7 +184,7 @@ If this server is going to be called frequently by an AI, the useful surface is 
 - `bootstrap_project_memory` to initialize a project root and standard memory areas.
 - `upsert_entity` so the AI can write idempotently instead of guessing whether to create or update.
 - `connect_entities` so repeated graph writes do not produce duplicate edges.
-- `append_content` so narrative memory can be added without the AI having to mint content ids every time.
+- `write_content` so narrative memory can be added/replaced without the AI having to mint content ids every time.
 - `get_recent_activity` so an AI can resume context quickly after a new session.
 - `run_read_query` for controlled read-only analytics when the built-in tools are not enough.
 - `render_markdown_views` and `export_markdown_views` only after the user explicitly asks for a human-readable `todo`, `roadmap`, `plan`, `architecture`, `decisions`, or `notes` document.
@@ -196,7 +195,7 @@ If this server is going to be called frequently by an AI, the useful surface is 
 
 For the remaining human-facing documents, `sync-document` provides a structured migration path into the anchor memory areas for `architecture`, `decisions`, `plan`, and `notes`. The generated views then combine that synced document content with the structured SQLite state instead of rendering a flat dump.
 
-Roadmap state is different: it is maintained directly through SQLite entities, attributes, relationships, and content. There is no supported `roadmap.md` import workflow anymore. If an AI needs to change roadmap state, it should use normal MCP write tools such as `upsert_entity`, `append_content`, `set_tags`, and `connect_entities`, then generate `roadmap.md` only when a user explicitly asks for that artifact.
+Roadmap state is different: it is maintained directly through SQLite entities, attributes, relationships, and content. There is no supported `roadmap.md` import workflow anymore. If an AI needs to change roadmap state, it should use normal MCP write tools such as `upsert_entity`, `write_content`, `set_tags`, and `connect_entities`, then generate `roadmap.md` only when a user explicitly asks for that artifact.
 
 The intended pattern is:
 

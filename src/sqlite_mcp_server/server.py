@@ -761,6 +761,13 @@ def get_snapshot(snapshot_id: str, ctx: Context | None = None) -> dict[str, Any]
 
 
 @mcp.tool()
+def list_views(ctx: Context | None = None) -> list[str]:
+    """List available view names for query_view discovery."""
+    assert ctx is not None
+    return _db(ctx).list_views()
+
+
+@mcp.tool()
 def query_view(
     view_name: str,
     params: dict[str, Any] | None = None,

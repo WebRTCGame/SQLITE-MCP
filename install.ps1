@@ -105,8 +105,8 @@ $serverEntry = [pscustomobject]@{
     args = @('-m', 'sqlite_mcp_server')
     env = [ordered]@{
         SQLITE_MCP_TRANSPORT = 'stdio'
-        SQLITE_MCP_DB_PATH = 'data/project_memory.db'
-        SQLITE_MCP_EXPORT_DIR = 'exports'
+        SQLITE_MCP_DB_PATH = $dbPath
+        SQLITE_MCP_EXPORT_DIR = $exportDir
     }
 }
 

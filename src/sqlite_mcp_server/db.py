@@ -432,8 +432,8 @@ class DatabaseManager:
         """
         connection.executescript(views_sql)
 
-    def query_view(self, view_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        if view_name not in {
+    def list_views(self) -> list[str]:
+        return [
             'open_tasks',
             'decision_log',
             'architecture_summary',
@@ -442,7 +442,10 @@ class DatabaseManager:
             'recent_activity',
             'project_state',
             'project_summary',
-        }:
+        ]
+
+    def query_view(self, view_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if view_name not in self.list_views():
             raise ValidationError(f"unsupported view_name: {view_name!r}")
 
         params = params or {}

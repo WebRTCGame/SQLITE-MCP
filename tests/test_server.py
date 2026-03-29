@@ -124,6 +124,51 @@ def test_project_summary_view_via_query_view(tmp_path: Path) -> None:
         manager.close()
 
 
+def test_write_content_tool(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    db_path = repo_root / 'project_memory.db'
+    manager = server.DatabaseManager(db_path)
+    manager.connect()
+
+    try:
+        manager.bootstrap_project_memory('project.sqlite-mcp', 'SQLite MCP')
+
+        class Ctx:
+            request_context = type('x', (), {'lifespan_context': type('y', (), {'db': manager})()})()
+
+        ctx = Ctx()
+        manager.create_entity('task.write-test', 'task', name='Write Content Test')
+
+        result_append = server.write_content(
+            entity_id='task.write-test',
+            mode='append',
+            content='initial text',
+            content_type='text',
+            ctx=ctx,
+        )
+        assert result_append['entity_id'] == 'task.write-test'
+        assert result_append['content_type'] == 'text'
+        assert result_append['body'] == 'initial text'
+
+        result_replace = server.write_content(
+            entity_id='task.write-test',
+            mode='replace',
+            content='updated text',
+            content_type='text',
+            ctx=ctx,
+        )
+        assert result_replace['body'] == 'updated text'
+
+        rows = manager._fetch_all(
+            'SELECT body FROM content WHERE entity_id = ? AND content_type = ?',
+            ('task.write-test', 'text'),
+        )
+        assert len(rows) == 1
+        assert rows[0]['body'] == 'updated text'
+    finally:
+        manager.close()
+
+
 def test_app_lifespan_applies_performance_tuning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     called = []
 

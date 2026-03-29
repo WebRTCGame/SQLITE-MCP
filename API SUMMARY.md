@@ -77,6 +77,7 @@ This file provides a compact reference for the MCP server toolset and integratio
 
 ## Summary/report tools (via query_view)
 
+- `list_views` returns all supported summary views: `open_tasks`, `project_state`, `project_summary`, `decision_log`, `architecture_summary`, `recent_reasoning`, `dependency_view`, `recent_activity`, `entity_graph`.
 - `query_view` now consolidates all projection views, including `open_tasks`, `project_state`, `project_summary`, `decision_log`, `architecture_summary`, `recent_reasoning`, `dependency_view`, `recent_activity`, `entity_graph`.
 - `project_summary` is implemented as a SQL view and is accessible only through `query_view(view_name='project_summary')`; no separate `@mcp.tool` endpoint exists.
 - Legacy dedicated summary wrapper endpoints are removed from the core projection path; read projections should use `query_view`.
@@ -93,8 +94,8 @@ This file provides a compact reference for the MCP server toolset and integratio
 
 ## Context and management tools
 
-- `get_project_context`
-- `set_project_root`
+- `get_project_context` (read-only)
+- `set_project_root` (mutable, switches active project context and reconnects DB)
 - `server_info`
 
 ## Resource endpoints
@@ -123,7 +124,7 @@ This file provides a compact reference for the MCP server toolset and integratio
    - `export_markdown_views` (requires `user_requested=true` + reason)
    - `apply_performance_tuning`
    - `refresh_task_summary`
-5. Use `get_database_health`, `prune_content_retention`, and `server_info` for hygiene.
+5. Use `get_database_health` and `prune_content_retention` for hygiene.
 6. No wrapper tools: use primitive CRUD and `query_view` only.
 
 ## Installed CLI
