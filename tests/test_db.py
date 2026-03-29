@@ -210,6 +210,30 @@ def test_schema_overview_reports_schema_version_and_relationship_policy(db: Data
     assert overview["policy"]["semantic_retrieval"]["embeddings_enabled"] is False
 
 
+def test_apply_performance_tuning_sets_pragmas_and_creates_summary(db: DatabaseManager) -> None:
+    result = db.apply_performance_tuning(automatic_index=True)
+    assert result["task_summary"]["task_summary_exists"] is True
+    assert result["task_summary"]["total_tasks"] == 0
+    assert str(result["pragmas"]["journal_mode"]).lower() == "wal"
+    synchronous_value = result["pragmas"]["synchronous"]
+    assert str(synchronous_value).lower() in {"normal", "1", "2", "3"}
+
+
+def test_refresh_task_summary_creates_task_summary_items(db: DatabaseManager) -> None:
+    db.create_entity(
+        "task.performance",
+        "task",
+        name="Tune performance",
+        status="active",
+        attributes={"priority": "high", "rank": "1", "phase_number": "10"},
+    )
+    summary = db.refresh_task_summary()
+    assert summary["task_summary_exists"] is True
+    assert summary["entity_count"] == 1
+    rows = db._fetch_all("SELECT id, rank, priority FROM task_summary")
+    assert rows[0]["id"] == "task.performance"
+
+
 def test_archive_and_delete_require_safe_lifecycle(db: DatabaseManager) -> None:
     db.create_entity("task.cleanup", "task", name="Cleanup", status="active")
     db.create_entity("task.blocker", "task", name="Blocker", status="active")

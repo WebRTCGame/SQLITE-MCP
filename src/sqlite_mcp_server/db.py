@@ -1173,65 +1173,102 @@ class DatabaseManager:
     def get_open_tasks(self, limit: int = 25, offset: int = 0, compact: bool = False) -> dict[str, Any]:
         limit = _bounded_limit(limit, maximum=100)
         offset = _bounded_offset(offset)
-        total_count = (
-            self._fetch_one(
+        if self._table_exists("task_summary"):
+            total_count = (
+                self._fetch_one(
+                    "SELECT COUNT(*) AS count FROM task_summary"
+                ) or {"count": 0}
+            )["count"]
+            items = self._fetch_all(
                 """
-                SELECT COUNT(*) AS count
-                FROM entities
-                WHERE type IN ('task', 'todo', 'bug')
-                  AND COALESCE(status, 'active') NOT IN ('done', 'archived', 'deprecated')
-                  AND NOT EXISTS (
-                      SELECT 1 FROM relationships mr
-                      WHERE mr.to_entity = entities.id AND mr.type = 'has_memory_area'
-                  )
-                """
+                SELECT
+                    id,
+                    type,
+                    name,
+                    status,
+                    updated_at,
+                    rank,
+                    priority,
+                    owner,
+                    phase_number,
+                    dependency_count,
+                    blocker_count
+                FROM task_summary
+                ORDER BY
+                    rank ASC,
+                    CASE priority
+                        WHEN 'critical' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        WHEN 'low' THEN 4
+                        ELSE 5
+                    END,
+                    updated_at DESC,
+                    id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
             )
-            or {"count": 0}
-        )["count"]
+        else:
+            total_count = (
+                self._fetch_one(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM entities
+                    WHERE type IN ('task', 'todo', 'bug')
+                      AND COALESCE(status, 'active') NOT IN ('done', 'archived', 'deprecated')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM relationships mr
+                          WHERE mr.to_entity = entities.id AND mr.type = 'has_memory_area'
+                      )
+                    """
+                )
+                or {"count": 0}
+            )["count"]
 
-        items = self._fetch_all(
-            """
-            SELECT
-                e.id,
-                e.type,
-                e.name,
-                e.status,
-                e.updated_at,
-                MAX(CASE WHEN a.key = 'rank' THEN a.value END) AS rank,
-                MAX(CASE WHEN a.key = 'priority' THEN a.value END) AS priority,
-                MAX(CASE WHEN a.key = 'owner' THEN a.value END) AS owner,
-                MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS phase_number,
-                SUM(CASE WHEN r.type = 'depends_on' AND r.from_entity = e.id THEN 1 ELSE 0 END) AS dependency_count,
-                SUM(CASE WHEN r.type = 'blocks' AND r.to_entity = e.id THEN 1 ELSE 0 END) AS blocker_count
-            FROM entities e
-            LEFT JOIN attributes a ON a.entity_id = e.id
-            LEFT JOIN relationships r ON r.from_entity = e.id OR r.to_entity = e.id
-            WHERE e.type IN ('task', 'todo', 'bug')
-              AND COALESCE(e.status, 'active') NOT IN ('done', 'archived', 'deprecated')
-                            AND NOT EXISTS (
-                                    SELECT 1 FROM relationships mr
-                                    WHERE mr.to_entity = e.id AND mr.type = 'has_memory_area'
-                            )
-            GROUP BY e.id, e.type, e.name, e.status, e.updated_at
-            ORDER BY
-                CASE
-                    WHEN MAX(CASE WHEN a.key = 'rank' THEN a.value END) GLOB '[0-9]*'
-                    THEN CAST(MAX(CASE WHEN a.key = 'rank' THEN a.value END) AS INTEGER)
-                    ELSE 9999
-                END,
-                CASE COALESCE(MAX(CASE WHEN a.key = 'priority' THEN a.value END), '')
-                    WHEN 'critical' THEN 1
-                    WHEN 'high' THEN 2
-                    WHEN 'medium' THEN 3
-                    WHEN 'low' THEN 4
-                    ELSE 5
-                END,
-                e.updated_at DESC,
-                e.id ASC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        )
+            items = self._fetch_all(
+                """
+                SELECT
+                    e.id,
+                    e.type,
+                    e.name,
+                    e.status,
+                    e.updated_at,
+                    MAX(CASE WHEN a.key = 'rank' THEN a.value END) AS rank,
+                    MAX(CASE WHEN a.key = 'priority' THEN a.value END) AS priority,
+                    MAX(CASE WHEN a.key = 'owner' THEN a.value END) AS owner,
+                    MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS phase_number,
+                    SUM(CASE WHEN r.type = 'depends_on' AND r.from_entity = e.id THEN 1 ELSE 0 END) AS dependency_count,
+                    SUM(CASE WHEN r.type = 'blocks' AND r.to_entity = e.id THEN 1 ELSE 0 END) AS blocker_count
+                FROM entities e
+                LEFT JOIN attributes a ON a.entity_id = e.id
+                LEFT JOIN relationships r ON r.from_entity = e.id OR r.to_entity = e.id
+                WHERE e.type IN ('task', 'todo', 'bug')
+                  AND COALESCE(e.status, 'active') NOT IN ('done', 'archived', 'deprecated')
+                                AND NOT EXISTS (
+                                        SELECT 1 FROM relationships mr
+                                        WHERE mr.to_entity = e.id AND mr.type = 'has_memory_area'
+                                )
+                GROUP BY e.id, e.type, e.name, e.status, e.updated_at
+                ORDER BY
+                    CASE
+                        WHEN MAX(CASE WHEN a.key = 'rank' THEN a.value END) GLOB '[0-9]*'
+                        THEN CAST(MAX(CASE WHEN a.key = 'rank' THEN a.value END) AS INTEGER)
+                        ELSE 9999
+                    END,
+                    CASE COALESCE(MAX(CASE WHEN a.key = 'priority' THEN a.value END), '')
+                        WHEN 'critical' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        WHEN 'low' THEN 4
+                        ELSE 5
+                    END,
+                    e.updated_at DESC,
+                    e.id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            )
         return _summary_envelope(
             "open_tasks.v1",
             {
@@ -2194,6 +2231,104 @@ class DatabaseManager:
             "retention_policy": {
                 "content_types": sorted(RETENTION_CONTENT_TYPES),
                 "recommended_keep_latest": RETAIN_LATEST_CONTENT_COUNT,
+            },
+        }
+
+    def _table_exists(self, table_name: str) -> bool:
+        result = self._fetch_one(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?",
+            (table_name,),
+        )
+        return result is not None
+
+    def refresh_task_summary(self) -> dict[str, Any]:
+        with self._transaction() as connection:
+            connection.execute("DROP TABLE IF EXISTS task_summary")
+            connection.execute(
+                """
+                CREATE TABLE task_summary AS
+                SELECT
+                    e.id,
+                    e.type,
+                    e.name,
+                    e.description,
+                    e.status,
+                    e.updated_at,
+                    COALESCE(MAX(CASE WHEN a.key = 'rank' THEN CAST(a.value AS INTEGER) END), 9999) AS rank,
+                    COALESCE(MAX(CASE WHEN a.key = 'priority' THEN a.value END), '') AS priority,
+                    COALESCE(MAX(CASE WHEN a.key = 'owner' THEN a.value END), '') AS owner,
+                    MAX(CASE WHEN a.key = 'phase_number' THEN a.value END) AS phase_number,
+                    SUM(CASE WHEN r.type = 'depends_on' AND r.from_entity = e.id THEN 1 ELSE 0 END) AS dependency_count,
+                    SUM(CASE WHEN r.type = 'blocks' AND r.to_entity = e.id THEN 1 ELSE 0 END) AS blocker_count
+                FROM entities e
+                LEFT JOIN attributes a ON a.entity_id = e.id
+                LEFT JOIN relationships r ON r.from_entity = e.id OR r.to_entity = e.id
+                WHERE e.type IN ('task', 'todo', 'bug')
+                  AND COALESCE(e.status, 'active') NOT IN ('done', 'archived', 'deprecated')
+                GROUP BY e.id
+                """,
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_summary_rank_priority_updated ON task_summary(rank, priority, updated_at, id)"
+            )
+
+        return {
+            "task_summary_exists": self._table_exists("task_summary"),
+            "entity_count": self._fetch_one("SELECT COUNT(*) AS count FROM task_summary")['count'],
+        }
+
+    def apply_performance_tuning(
+        self,
+        journal_mode: str = "WAL",
+        synchronous: str = "NORMAL",
+        temp_store: str = "MEMORY",
+        cache_size: int = 20000,
+        mmap_size: int = 268435456,
+        automatic_index: bool = True,
+    ) -> dict[str, Any]:
+        if self._connection is None:
+            raise RuntimeError("database connection has not been initialized")
+
+        pragmas = {
+            "journal_mode": journal_mode,
+            "synchronous": synchronous,
+            "temp_store": temp_store,
+            "cache_size": cache_size,
+            "mmap_size": mmap_size,
+        }
+
+        applied = {}
+        with self._transaction() as connection:
+            for pragma, value in pragmas.items():
+                connection.execute(f"PRAGMA {pragma} = {value}")
+                current = connection.execute(f"PRAGMA {pragma}").fetchone()
+                applied[pragma] = current[0] if current is not None else None
+
+            if automatic_index:
+                connection.execute("PRAGMA automatic_index = ON")
+                current = connection.execute("PRAGMA automatic_index").fetchone()
+                applied["automatic_index"] = current[0] if current is not None else None
+
+            # Recommended additional indexes for high-frequency task and content queries
+            recommended_indexes = {
+                "idx_entities_type_status_updated": "CREATE INDEX IF NOT EXISTS idx_entities_type_status_updated ON entities(type, status, updated_at DESC)",
+                "idx_attributes_entity_key": "CREATE INDEX IF NOT EXISTS idx_attributes_entity_key ON attributes(entity_id, key, value)",
+                "idx_content_type_entity": "CREATE INDEX IF NOT EXISTS idx_content_type_entity ON content(content_type, entity_id, created_at DESC)",
+            }
+            created_indexes = []
+            for index_name, sql in recommended_indexes.items():
+                connection.execute(sql)
+                created_indexes.append(index_name)
+
+            # Rebuild query-optimized summary for open task queries.
+            self.refresh_task_summary()
+
+        return {
+            "pragmas": applied,
+            "created_indexes": created_indexes,
+            "task_summary": {
+                "task_summary_exists": self._table_exists("task_summary"),
+                "total_tasks": self._fetch_one("SELECT COUNT(*) AS count FROM task_summary")['count'],
             },
         }
 

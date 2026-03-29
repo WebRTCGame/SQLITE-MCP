@@ -50,6 +50,25 @@ python -m pip install -e .
 Write-Host "Bootstrapping project memory..."
 sqlite-project-memory-admin bootstrap-self --repo-root .
 
+Write-Host "Checking for running sqlite_mcp_server processes..."
+$runningMcp = Get-CimInstance Win32_Process | Where-Object {
+    ($_.CommandLine -ne $null) -and ($_.CommandLine -like '*-m sqlite_mcp_server*' -or $_.CommandLine -like '*sqlite_mcp_server*')
+}
+
+if ($runningMcp) {
+    Write-Host "Found active sqlite_mcp_server process(es). Stopping them before install..."
+    foreach ($proc in $runningMcp) {
+        try {
+            Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
+            Write-Host "Stopped process $($proc.ProcessId): $($proc.CommandLine)"
+        } catch {
+            Write-Warning "Failed to stop process $($proc.ProcessId): $($_.Exception.Message)"
+        }
+    }
+} else {
+    Write-Host "No running sqlite_mcp_server processes found."
+}
+
 Write-Host "Running health checks..."
 sqlite-project-memory-admin project-state
 $sqliteProjectMemoryAdmin = Get-Command sqlite-project-memory-admin -ErrorAction SilentlyContinue
@@ -78,35 +97,11 @@ $venvPython = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $dbPath = Join-Path $projectRoot 'data\project_memory.db'
 $exportDir = Join-Path $projectRoot 'exports'
 
-# Create project-local workspace MCP config in .vscode/mcp.json to keep settings scoped
-$workspaceMcpDir = Join-Path $projectRoot '.vscode'
-if (-Not (Test-Path $workspaceMcpDir)) {
-    New-Item -ItemType Directory -Path $workspaceMcpDir | Out-Null
-}
-$workspaceMcpConfig = Join-Path $workspaceMcpDir 'mcp.json'
-$workspaceEntry = [pscustomobject]@{
-    servers = [pscustomobject]@{
-        'sqlite-project-memory' = [pscustomobject]@{
-            type = 'stdio'
-            command = $venvPython
-            args = @('-m', 'sqlite_mcp_server')
-            env = [ordered]@{
-                SQLITE_MCP_TRANSPORT = 'stdio'
-                SQLITE_MCP_DB_PATH = 'data/project_memory.db'
-                SQLITE_MCP_EXPORT_DIR = 'exports'
-            }
-        }
-    }
-    inputs = @()
-}
-$workspaceEntry | ConvertTo-Json -Depth 10 | Set-Content -Path $workspaceMcpConfig -Encoding UTF8
-Write-Host "Created workspace MCP config at $workspaceMcpConfig"
-
-# Add a generic fallback in the user-local MCP host config, but keep repository-specific values in the workspace config.
-# This ensures users can switch between projects without per-project absolute paths in their global profile.
+# Configure machine-global MCP host config only. Per-project workspace config is intentionally skipped.
+# This avoids duplicate settings and centralizes the registered under Code Insiders user scope.
 $serverEntry = [pscustomobject]@{
     type = 'stdio'
-    command = 'python'
+    command = $venvPython
     args = @('-m', 'sqlite_mcp_server')
     env = [ordered]@{
         SQLITE_MCP_TRANSPORT = 'stdio'

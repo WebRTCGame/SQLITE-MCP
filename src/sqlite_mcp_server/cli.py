@@ -258,6 +258,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     health.add_argument("--limit", type=int, default=25)
 
+    performance_tune = subparsers.add_parser(
+        "performance-tune",
+        help="Apply database tuning pragmas and indexes for SQLite performance.",
+    )
+    performance_tune.add_argument("--journal-mode", type=str, default="WAL")
+    performance_tune.add_argument("--synchronous", type=str, default="NORMAL")
+    performance_tune.add_argument("--temp-store", type=str, default="MEMORY")
+    performance_tune.add_argument("--cache-size", type=int, default=20000)
+    performance_tune.add_argument("--mmap-size", type=int, default=268435456)
+    performance_tune.add_argument("--automatic-index", action="store_true")
+
+    refresh_task_summary = subparsers.add_parser(
+        "refresh-task-summary",
+        help="Rebuild the task_summary materialized table for faster task queries.",
+    )
+
     export_views = subparsers.add_parser(
         "export-views",
         help="Write generated markdown views from the database.",
@@ -324,6 +340,23 @@ def main() -> None:
 
         if args.command == "health":
             _print_json(manager.get_database_health(limit=args.limit))
+            return
+
+        if args.command == "performance-tune":
+            _print_json(
+                manager.apply_performance_tuning(
+                    journal_mode=args.journal_mode,
+                    synchronous=args.synchronous,
+                    temp_store=args.temp_store,
+                    cache_size=args.cache_size,
+                    mmap_size=args.mmap_size,
+                    automatic_index=args.automatic_index,
+                )
+            )
+            return
+
+        if args.command == "refresh-task-summary":
+            _print_json(manager.refresh_task_summary())
             return
 
         if args.command == "export-views":

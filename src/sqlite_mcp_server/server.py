@@ -292,6 +292,27 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     db = DatabaseManager(db_path)
     db.connect()
 
+    try:
+        tune = db.apply_performance_tuning()
+        SERVER_LOGGER.info(
+            "server.performance_tuning",
+            extra={
+                "event": "server.performance_tuning",
+                "details": tune,
+                "database_path": str(db.db_path),
+            },
+        )
+    except Exception as exc:
+        SERVER_LOGGER.warning(
+            "server.performance_tuning_failed",
+            extra={
+                "event": "server.performance_tuning_failed",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "database_path": str(db.db_path),
+            },
+        )
+
     SERVER_LOGGER.info(
         "server.start",
         extra={
@@ -781,6 +802,35 @@ def get_open_tasks(
     """Return open task-like entities in a compact, deterministic shape."""
     assert ctx is not None
     return _db(ctx).get_open_tasks(limit=limit, offset=offset, compact=compact)
+
+
+@mcp.tool()
+def refresh_task_summary(ctx: Context | None = None) -> dict[str, Any]:
+    """Rebuild a task summary materialized table for faster open task queries."""
+    assert ctx is not None
+    return _db(ctx).refresh_task_summary()
+
+
+@mcp.tool()
+def apply_performance_tuning(
+    journal_mode: str = "WAL",
+    synchronous: str = "NORMAL",
+    temp_store: str = "MEMORY",
+    cache_size: int = 20000,
+    mmap_size: int = 268435456,
+    automatic_index: bool = True,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Tune SQLite settings for throughput during heavy project-memory workloads."""
+    assert ctx is not None
+    return _db(ctx).apply_performance_tuning(
+        journal_mode=journal_mode,
+        synchronous=synchronous,
+        temp_store=temp_store,
+        cache_size=cache_size,
+        mmap_size=mmap_size,
+        automatic_index=automatic_index,
+    )
 
 
 @mcp.tool()

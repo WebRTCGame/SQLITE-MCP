@@ -3,8 +3,10 @@ from __future__ import annotations
 import io
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
+import anyio
 import pytest
 
 import sqlite_mcp_server.server as server
@@ -95,3 +97,41 @@ def test_high_frequency_read_tools_default_to_compact(monkeypatch: pytest.Monkey
 
     assert result["compact"] is True
     assert calls == [True]
+
+
+def test_apply_performance_tuning_tool_exposes_db_method(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeDb:
+        def __init__(self) -> None:
+            self.called = False
+
+        def apply_performance_tuning(self, **kwargs: Any) -> dict[str, Any]:
+            self.called = True
+            return {"applied": True, "kwargs": kwargs}
+
+    fake_db = FakeDb()
+    monkeypatch.setattr(server, "_db", lambda ctx: fake_db)
+    ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=SimpleNamespace(db=None)))
+
+    response = server.apply_performance_tuning(ctx=ctx)
+
+    assert response["applied"] is True
+    assert fake_db.called is True
+
+
+def test_app_lifespan_applies_performance_tuning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    called = []
+
+    monkeypatch.setattr(server, "_initial_project_root", lambda: tmp_path)
+
+    def fake_apply(self, **kwargs: Any) -> dict[str, Any]:
+        called.append(True)
+        return {"pragmas": {"journal_mode": "wal"}}
+
+    monkeypatch.setattr(server.DatabaseManager, "apply_performance_tuning", fake_apply)
+
+    async def runner() -> None:
+        async with server.app_lifespan(None) as ctx:
+            assert str(ctx.project_root) == str(tmp_path)
+
+    anyio.run(runner)
+    assert called
