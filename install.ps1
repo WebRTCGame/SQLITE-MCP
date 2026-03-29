@@ -102,18 +102,30 @@ $workspaceEntry = [pscustomobject]@{
 $workspaceEntry | ConvertTo-Json -Depth 10 | Set-Content -Path $workspaceMcpConfig -Encoding UTF8
 Write-Host "Created workspace MCP config at $workspaceMcpConfig"
 
+# Add a generic fallback in the user-local MCP host config, but keep repository-specific values in the workspace config.
+# This ensures users can switch between projects without per-project absolute paths in their global profile.
 $serverEntry = [pscustomobject]@{
     type = 'stdio'
-    command = $venvPython
+    command = 'python'
     args = @('-m', 'sqlite_mcp_server')
     env = [ordered]@{
         SQLITE_MCP_TRANSPORT = 'stdio'
-        SQLITE_MCP_DB_PATH = $dbPath
-        SQLITE_MCP_EXPORT_DIR = $exportDir
+        SQLITE_MCP_DB_PATH = 'data/project_memory.db'
+        SQLITE_MCP_EXPORT_DIR = 'exports'
     }
 }
 
-$mcp.servers.'sqlite-project-memory' = $serverEntry
+if ($mcp.servers -is [System.Collections.Hashtable]) {
+    $mcp.servers['sqlite-project-memory'] = $serverEntry
+} else {
+    # Convert to hashtable to preserve safe assignment of dash-containing keys.
+    $hashtable = @{}
+    foreach ($key in $mcp.servers.PSObject.Properties.Name) {
+        $hashtable[$key] = $mcp.servers.$key
+    }
+    $hashtable['sqlite-project-memory'] = $serverEntry
+    $mcp.servers = $hashtable
+}
 
 $mcp | ConvertTo-Json -Depth 10 | Set-Content -Path $mcpConfigPath -Encoding UTF8
 

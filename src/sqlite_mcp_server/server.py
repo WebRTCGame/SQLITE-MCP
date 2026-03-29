@@ -20,16 +20,33 @@ from mcp.server.fastmcp import Context, FastMCP
 from sqlite_mcp_server.db import DatabaseManager
 
 
-def _default_db_path() -> Path:
+def _normalize_path_config(value: str | None, default_root: Path, relative_default: str) -> Path:
+    if value:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = default_root / candidate
+        return candidate.resolve()
+    return (default_root / relative_default).resolve()
+
+
+def _default_db_path(project_root: Path | None = None) -> Path:
+    root = (project_root or Path.cwd()).resolve()
     configured = os.getenv("SQLITE_MCP_DB_PATH")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return (Path.cwd() / "data" / "project_memory.db").resolve()
+    return _normalize_path_config(configured, root, "data/project_memory.db")
+
+
+def _default_exports_dir(project_root: Path | None = None) -> Path:
+    root = (project_root or Path.cwd()).resolve()
+    configured = os.getenv("SQLITE_MCP_EXPORT_DIR")
+    return _normalize_path_config(configured, root, "exports")
 
 
 @dataclass
 class AppContext:
     db: DatabaseManager
+    project_root: Path
+    db_path: Path
+    export_dir: Path
 
 
 class _JsonLogFormatter(logging.Formatter):
@@ -257,20 +274,36 @@ def _instrumented_tool(*tool_args: Any, **tool_kwargs: Any) -> Callable[[Callabl
     return decorator
 
 
+def _initial_project_root() -> Path:
+    configured = os.getenv("SQLITE_MCP_PROJECT_ROOT")
+    if configured:
+        project_root = Path(configured).expanduser().resolve()
+        if project_root.is_dir():
+            return project_root
+    return Path.cwd().resolve()
+
+
 @asynccontextmanager
 async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
-    db = DatabaseManager(_default_db_path())
+    project_root = _initial_project_root()
+    db_path = _default_db_path(project_root)
+    export_dir = _default_exports_dir(project_root)
+
+    db = DatabaseManager(db_path)
     db.connect()
+
     SERVER_LOGGER.info(
         "server.start",
         extra={
             "event": "server.start",
             "transport": os.getenv("SQLITE_MCP_TRANSPORT", "stdio").strip().lower() or "stdio",
             "database_path": str(db.db_path),
+            "project_root": str(project_root),
+            "export_dir": str(export_dir),
         },
     )
     try:
-        yield AppContext(db=db)
+        yield AppContext(db=db, project_root=project_root, db_path=db_path, export_dir=export_dir)
     finally:
         SERVER_LOGGER.info(
             "server.stop",
@@ -278,6 +311,8 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
                 "event": "server.stop",
                 "transport": os.getenv("SQLITE_MCP_TRANSPORT", "stdio").strip().lower() or "stdio",
                 "database_path": str(db.db_path),
+                "project_root": str(project_root),
+                "export_dir": str(export_dir),
             },
         )
         db.close()
@@ -302,20 +337,70 @@ def _db(ctx: Context) -> DatabaseManager:
     return ctx.request_context.lifespan_context.db
 
 
-def _default_exports_dir() -> Path:
+def _app_context(ctx: Context) -> AppContext:
+    return ctx.request_context.lifespan_context
+
+
+@mcp.tool()
+def get_project_context(ctx: Context | None = None) -> dict[str, str]:
+    """Return the current project root, DB path, and export directory."""
+    assert ctx is not None
+    app_ctx = _app_context(ctx)
+    return {
+        "project_root": str(app_ctx.project_root),
+        "db_path": str(app_ctx.db_path),
+        "export_dir": str(app_ctx.export_dir),
+    }
+
+
+@mcp.tool()
+def set_project_root(project_root: str, ctx: Context | None = None) -> dict[str, str]:
+    """Switch project context (root + db + export path) and reconnect database."""
+    assert ctx is not None
+    app_ctx = _app_context(ctx)
+    root = Path(project_root).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise ValidationError(f"project_root {project_root!r} must be an existing directory")
+
+    db_path = _default_db_path(root)
+    export_dir = _default_exports_dir(root)
+
+    app_ctx.db.close()
+    app_ctx.db = DatabaseManager(db_path)
+    app_ctx.db.connect()
+    app_ctx.project_root = root
+    app_ctx.db_path = db_path
+    app_ctx.export_dir = export_dir
+
+    SERVER_LOGGER.info(
+        "project.updated",
+        extra={
+            "event": "project.updated",
+            "project_root": str(root),
+            "database_path": str(db_path),
+            "export_dir": str(export_dir),
+        },
+    )
+
+    return {"project_root": str(root), "db_path": str(db_path), "export_dir": str(export_dir)}
+
+
+def _default_exports_dir(project_root: Path | None = None) -> Path:
+    root = (project_root or Path.cwd()).resolve()
     configured = os.getenv("SQLITE_MCP_EXPORT_DIR")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return (Path.cwd() / "exports").resolve()
+    return _normalize_path_config(configured, root, "exports")
 
 
 @mcp.tool()
 def server_info(ctx: Context) -> dict[str, Any]:
     """Return server metadata and schema settings."""
     db = _db(ctx)
+    app_ctx = _app_context(ctx)
     return {
         "name": ctx.fastmcp.name,
+        "project_root": str(app_ctx.project_root),
         "database_path": str(db.db_path),
+        "export_dir": str(app_ctx.export_dir),
         "transport_hint": os.getenv("SQLITE_MCP_TRANSPORT", "stdio"),
         "logging": {
             "level": _log_level().lower(),

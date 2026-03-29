@@ -147,11 +147,17 @@ A repo-local sample MCP client configuration is available at [.vscode/mcp.sample
 
 Environment variables:
 
-- `SQLITE_MCP_DB_PATH`: override the SQLite database file path.
+- `SQLITE_MCP_PROJECT_ROOT`: optional explicit project directory root for context-sensitive DB and export paths.
+- `SQLITE_MCP_DB_PATH`: optional override path for the SQLite database file, interpreted relative to `SQLITE_MCP_PROJECT_ROOT` when not absolute; default is `data/project_memory.db` under project root.
+- `SQLITE_MCP_EXPORT_DIR`: optional override path for generated markdown export files, interpreted relative to project root when not absolute; default is `exports` under project root.
 - `SQLITE_MCP_TRANSPORT`: `stdio` or `streamable-http`.
-- `SQLITE_MCP_EXPORT_DIR`: default output directory for generated markdown views.
 - `SQLITE_MCP_LOG_LEVEL`: log level for server lifecycle and tool request logs. Defaults to `INFO`.
 - `SQLITE_MCP_LOG_FORMAT`: `json` or `text` for stderr logs. Defaults to `json`.
+
+Project context tools (in MCP API):
+
+- `get_project_context()` returns the currently configured project root, db_path, and export_dir.
+- `set_project_root(project_root)` switches the active project context at runtime and reconnects using project-local file paths.
 
 Example:
 
