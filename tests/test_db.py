@@ -205,7 +205,7 @@ def test_schema_overview_reports_schema_version_and_relationship_policy(db: Data
     assert overview["policy"]["retention"]["keep_latest"] == 20
     assert overview["policy"]["markdown_views"]["generation_policy"] == "on_demand_only"
     assert overview["policy"]["mcp_read_defaults"]["compact"] is True
-    assert "get_recent_activity" in overview["policy"]["mcp_read_defaults"]["tools"]
+    assert "query_view" in overview["policy"]["mcp_read_defaults"]["tools"]
     assert overview["policy"]["semantic_retrieval"]["default_strategy"] == "fts5_plus_structured_reads"
     assert overview["policy"]["semantic_retrieval"]["embeddings_enabled"] is False
 

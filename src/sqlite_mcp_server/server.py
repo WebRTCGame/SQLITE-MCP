@@ -711,38 +711,20 @@ def list_relationships(
 
 
 @mcp.tool()
-def add_content(
-    content_id: str,
+def write_content(
     entity_id: str,
+    mode: str,
+    content: str,
     content_type: str,
-    body: str,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Attach narrative content such as notes, specs, analysis, or reasoning to an entity."""
+    """Write narrative content in one unified API with append|replace semantics."""
     assert ctx is not None
-    return _db(ctx).add_content(
-        content_id=content_id,
+    return _db(ctx).write_content(
         entity_id=entity_id,
+        mode=mode,
+        content=content,
         content_type=content_type,
-        body=body,
-    )
-
-
-@mcp.tool()
-def append_content(
-    entity_id: str,
-    content_type: str,
-    body: str,
-    content_id: str | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Append narrative content and generate a content id when one is not supplied."""
-    assert ctx is not None
-    return _db(ctx).append_content(
-        entity_id=entity_id,
-        content_type=content_type,
-        body=body,
-        content_id=content_id,
     )
 
 
@@ -779,29 +761,21 @@ def get_snapshot(snapshot_id: str, ctx: Context | None = None) -> dict[str, Any]
 
 
 @mcp.tool()
-def get_project_overview(ctx: Context | None = None) -> dict[str, Any]:
-    """Return summary counts, recent events, and top tags for the project memory store."""
-    assert ctx is not None
-    return _db(ctx).get_project_overview()
-
-
-@mcp.tool()
-def get_project_state(limit: int = 10, compact: bool = True, ctx: Context | None = None) -> dict[str, Any]:
-    """Return a compact project-state summary for AI resumption and status checks."""
-    assert ctx is not None
-    return _db(ctx).get_project_state(limit=limit, compact=compact)
-
-
-@mcp.tool()
-def get_open_tasks(
-    limit: int = 25,
-    offset: int = 0,
-    compact: bool = True,
+def query_view(
+    view_name: str,
+    params: dict[str, Any] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Return open task-like entities in a compact, deterministic shape."""
+    """Query a named SQL view for generic reporting and model projections."""
     assert ctx is not None
-    return _db(ctx).get_open_tasks(limit=limit, offset=offset, compact=compact)
+    return _db(ctx).query_view(view_name=view_name, params=params)
+
+
+@mcp.tool()
+def get_database_health(limit: int = 25, ctx: Context | None = None) -> dict[str, Any]:
+    """Report likely duplicates, low-quality records, and retention pressure in project memory."""
+    assert ctx is not None
+    return _db(ctx).get_database_health(limit=limit)
 
 
 @mcp.tool()
@@ -833,7 +807,6 @@ def apply_performance_tuning(
     )
 
 
-@mcp.tool()
 def get_decision_log(
     limit: int = 25,
     offset: int = 0,
@@ -845,7 +818,6 @@ def get_decision_log(
     return _db(ctx).get_decision_log(limit=limit, offset=offset, compact=compact)
 
 
-@mcp.tool()
 def get_architecture_summary(
     node_limit: int = 100,
     relationship_limit: int = 150,
@@ -861,7 +833,6 @@ def get_architecture_summary(
     )
 
 
-@mcp.tool()
 def get_recent_reasoning(
     limit: int = 20,
     offset: int = 0,
@@ -873,7 +844,6 @@ def get_recent_reasoning(
     return _db(ctx).get_recent_reasoning(limit=limit, offset=offset, compact=compact)
 
 
-@mcp.tool()
 def get_dependency_view(
     root_entity_id: str | None = None,
     max_depth: int = 2,
@@ -893,7 +863,6 @@ def get_dependency_view(
     )
 
 
-@mcp.tool()
 def get_recent_activity(
     limit: int = 20,
     offset: int = 0,
@@ -903,13 +872,6 @@ def get_recent_activity(
     """Return recent entities, content, and events to help an AI resume context quickly."""
     assert ctx is not None
     return _db(ctx).get_recent_activity(limit=limit, offset=offset, compact=compact)
-
-
-@mcp.tool()
-def get_database_health(limit: int = 25, ctx: Context | None = None) -> dict[str, Any]:
-    """Report likely duplicates, low-quality records, and retention pressure in project memory."""
-    assert ctx is not None
-    return _db(ctx).get_database_health(limit=limit)
 
 
 @mcp.tool()

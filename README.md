@@ -47,6 +47,7 @@ The server also creates an FTS5 index for `content.body` when available.
 - `update_entity`
 - `get_entity`
 - `list_entities`
+- `project_summary` is now provided through `query_view(view_name='project_summary')` (SQL view) and is deprecated as direct helper.
 - `find_similar_entities`
 - `resolve_entity_by_name`
 - `get_or_create_entity`
@@ -96,6 +97,15 @@ High-frequency summary tools default to `compact=true` at the MCP boundary and r
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .
+```
+
+# Global MCP config (preferred)
+The install script now registers the MCP server entry in the global user-level old `mcp.json` only:
+`%APPDATA%\Code - Insiders\User\mcp.json`. This avoids duplicate project-local entries.
+
+Then launch the server once:
+
+```powershell
 python -m sqlite_mcp_server
 ```
 
@@ -191,9 +201,17 @@ Roadmap state is different: it is maintained directly through SQLite entities, a
 The intended pattern is:
 
 1. Use explicit domain tools for writes.
-2. Use summary-first read tools such as `get_project_state`, `get_open_tasks`, `get_decision_log`, `get_architecture_summary`, `get_recent_reasoning`, and `get_dependency_view` before falling back to lower-level queries.
-   `get_recent_activity` is also safe for resumptions because it paginates instead of returning an unbounded activity dump.
-3. Use `run_read_query` only for read-only inspection when the built-in summaries are not enough.
+2. Use `query_view` for summary and projection reads.
+   - `query_view(view_name='project_summary')`
+   - `query_view(view_name='open_tasks')`
+   - `query_view(view_name='project_state')`
+   - `query_view(view_name='recent_activity')`
+   - `query_view(view_name='decision_log')`
+   - `query_view(view_name='architecture_summary')`
+   - `query_view(view_name='recent_reasoning')`
+   - `query_view(view_name='dependency_view')`
+
+3. Use `run_read_query` only for read-only inspection when the built-in summary views are not enough.
 4. Generate markdown views only when a user explicitly asks for a document, and pass that request through the MCP call.
 5. Keep SQLite authoritative.
 

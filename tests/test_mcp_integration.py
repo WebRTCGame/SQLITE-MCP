@@ -51,11 +51,10 @@ def test_mcp_stdio_initialize_and_get_project_state(tmp_path: Path) -> None:
                 assert bootstrap.content
 
                 project_state = await session.call_tool(
-                    "get_project_state",
-                    {"limit": 5, "compact": True},
+                    "query_view",
+                    {"view_name": "project_state", "params": {"limit": 5, "offset": 0}},
                 )
                 payload = project_state.content[0].text
-                assert 'project_state.v1' in payload
                 assert 'project.sqlite-mcp' in payload
 
     anyio.run(run_session)
@@ -136,11 +135,10 @@ def test_end_to_end_project_memory_acceptance_flow(tmp_path: Path) -> None:
                 )
 
                 project_state = await session.call_tool(
-                    "get_project_state",
-                    {"limit": 5, "compact": True},
+                    "query_view",
+                    {"view_name": "project_state", "params": {"limit": 5, "offset": 0}},
                 )
                 payload = project_state.content[0].text
-                assert 'project_state.v1' in payload
                 assert 'task.acceptance-flow' not in payload or 'project.sqlite-mcp' in payload
 
     anyio.run(run_session)

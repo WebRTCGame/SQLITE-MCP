@@ -62,41 +62,24 @@ def test_run_logged_call_emits_error_record() -> None:
 
 
 @pytest.mark.parametrize(
-    ("tool_name", "kwargs"),
+    ("view_name", "params"),
     [
-        ("get_project_state", {"limit": 5}),
-        ("get_open_tasks", {"limit": 5, "offset": 0}),
-        ("get_decision_log", {"limit": 5, "offset": 0}),
-        ("get_architecture_summary", {"node_limit": 10, "relationship_limit": 10}),
-        ("get_recent_reasoning", {"limit": 5, "offset": 0}),
-        ("get_dependency_view", {"limit": 10}),
-        ("get_recent_activity", {"limit": 5, "offset": 0}),
-        (
-            "get_entity_graph",
-            {"entity_id": "project.sqlite-mcp", "max_depth": 1, "edge_limit": 10, "node_limit": 10},
-        ),
+        ("open_tasks", {"limit": 5}),
+        ("recent_activity", {"limit": 5}),
     ],
 )
-def test_high_frequency_read_tools_default_to_compact(monkeypatch: pytest.MonkeyPatch, tool_name: str, kwargs: dict[str, object]) -> None:
-    calls: list[bool] = []
-
+def test_query_view_tool_dispatch(monkeypatch: pytest.MonkeyPatch, view_name: str, params: dict[str, object]) -> None:
     class FakeDb:
-        def __getattr__(self, name: str):
-            def _method(**method_kwargs: object) -> dict[str, object]:
-                assert name == tool_name
-                calls.append(bool(method_kwargs["compact"]))
-                return {"compact": method_kwargs["compact"]}
-
-            return _method
+        def query_view(self, view_name: str, params: dict[str, object] | None = None):
+            return {"view": view_name, "params": params}
 
     monkeypatch.setattr(server, "_db", lambda ctx: FakeDb())
     ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=SimpleNamespace(db=None)))
 
-    tool = getattr(server, tool_name)
-    result = tool(ctx=ctx, **kwargs)
+    result = server.query_view(view_name=view_name, params=params, ctx=ctx)
 
-    assert result["compact"] is True
-    assert calls == [True]
+    assert result["view"] == view_name
+    assert result["params"] == params
 
 
 def test_apply_performance_tuning_tool_exposes_db_method(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,6 +99,29 @@ def test_apply_performance_tuning_tool_exposes_db_method(monkeypatch: pytest.Mon
 
     assert response["applied"] is True
     assert fake_db.called is True
+
+
+def test_project_summary_view_via_query_view(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    db_path = repo_root / 'project_memory.db'
+    manager = server.DatabaseManager(db_path)
+    manager.connect()
+
+    try:
+        manager.bootstrap_project_memory('project.sqlite-mcp', 'SQLite MCP')
+
+        class Ctx:
+            request_context = type('x', (), {'lifespan_context': type('y', (), {'db': manager})()})()
+
+        ctx = Ctx()
+        summary = server.query_view(view_name='project_summary', ctx=ctx)
+
+        sections = {row['section'] for row in summary['items']}
+        assert 'project_state' in sections
+        assert 'open_tasks' in sections
+        assert 'database_health' in sections
+    finally:
+        manager.close()
 
 
 def test_app_lifespan_applies_performance_tuning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

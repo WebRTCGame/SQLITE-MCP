@@ -283,6 +283,7 @@ class DatabaseManager:
         with self._transaction() as connection:
             connection.executescript(base_schema)
             self._initialize_schema_meta(connection)
+            self._initialize_sql_views(connection)
 
         self._initialize_fts()
 
@@ -328,6 +329,138 @@ class DatabaseManager:
                 "UPDATE schema_meta SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'schema_version'",
                 (str(target_version),),
             )
+
+    def _initialize_sql_views(self, connection: sqlite3.Connection) -> None:
+        views_sql = """
+        CREATE VIEW IF NOT EXISTS open_tasks AS
+            SELECT
+                e.id,
+                e.type,
+                e.name,
+                e.description,
+                e.status,
+                e.updated_at,
+                COALESCE(a.rank, '9999') AS rank,
+                a.priority,
+                a.owner,
+                a.phase_number
+            FROM entities e
+            LEFT JOIN (
+                SELECT
+                    entity_id,
+                    MAX(CASE WHEN key='rank' THEN value END) AS rank,
+                    MAX(CASE WHEN key='priority' THEN value END) AS priority,
+                    MAX(CASE WHEN key='owner' THEN value END) AS owner,
+                    MAX(CASE WHEN key='phase_number' THEN value END) AS phase_number
+                FROM attributes
+                GROUP BY entity_id
+            ) a ON a.entity_id = e.id
+            WHERE e.type IN ('task','todo','bug')
+              AND COALESCE(e.status, 'active') NOT IN ('done','archived','deprecated');
+
+        CREATE VIEW IF NOT EXISTS decision_log AS
+            SELECT e.id, e.type, e.name, e.status, e.description, e.updated_at
+            FROM entities e
+            WHERE e.type IN ('decision', 'decision_log')
+            ORDER BY e.updated_at DESC, e.id ASC;
+
+        CREATE VIEW IF NOT EXISTS architecture_summary AS
+            SELECT e.id, e.type, e.name, e.status, e.updated_at
+            FROM entities e
+            WHERE e.type IN ('architecture', 'module', 'component', 'service', 'file')
+            ORDER BY e.type ASC, e.updated_at DESC, e.id ASC;
+
+        CREATE VIEW IF NOT EXISTS recent_reasoning AS
+            SELECT c.id, c.entity_id, e.type AS entity_type, e.name AS entity_name, substr(c.body, 1, 280) AS excerpt, c.created_at
+            FROM content c
+            JOIN entities e ON e.id = c.entity_id
+            WHERE c.content_type = 'reasoning'
+            ORDER BY c.created_at DESC, c.id DESC;
+
+        CREATE VIEW IF NOT EXISTS dependency_view AS
+            SELECT r.id, r.from_entity, r.to_entity, r.type, r.created_at
+            FROM relationships r
+            WHERE r.type IN ('depends_on','blocks')
+            ORDER BY r.created_at DESC, r.id ASC;
+
+        CREATE VIEW IF NOT EXISTS recent_activity AS
+            SELECT 'event' AS kind, id, entity_id, event_type AS type, created_at
+            FROM events
+            UNION ALL
+            SELECT 'entity' AS kind, id, NULL AS entity_id, type, updated_at
+            FROM entities
+            UNION ALL
+            SELECT 'content' AS kind, id, entity_id, content_type AS type, created_at
+            FROM content
+            ORDER BY created_at DESC, id DESC;
+
+        CREATE VIEW IF NOT EXISTS project_state AS
+            SELECT e.id, e.type, e.name, e.status, e.updated_at
+            FROM entities e
+            WHERE e.type = 'project'
+            ORDER BY e.updated_at DESC, e.id ASC;
+
+        CREATE VIEW IF NOT EXISTS project_summary AS
+            SELECT 'project_state' AS section,
+                   json_group_array(json_object(
+                       'id', id,
+                       'type', type,
+                       'name', name,
+                       'status', status,
+                       'updated_at', updated_at
+                   )) AS entries
+            FROM project_state
+        UNION ALL
+            SELECT 'open_tasks' AS section,
+                   json_group_array(json_object(
+                       'id', id,
+                       'type', type,
+                       'name', name,
+                       'status', status,
+                       'updated_at', updated_at
+                   )) AS entries
+            FROM open_tasks
+        UNION ALL
+            SELECT 'database_health' AS section,
+                   json_object(
+                       'total_entities', (SELECT COUNT(*) FROM entities),
+                       'total_relationships', (SELECT COUNT(*) FROM relationships),
+                       'total_content', (SELECT COUNT(*) FROM content),
+                       'total_events', (SELECT COUNT(*) FROM events)
+                   ) AS entries
+            FROM (SELECT 1);
+        """
+        connection.executescript(views_sql)
+
+    def query_view(self, view_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if view_name not in {
+            'open_tasks',
+            'decision_log',
+            'architecture_summary',
+            'recent_reasoning',
+            'dependency_view',
+            'recent_activity',
+            'project_state',
+            'project_summary',
+        }:
+            raise ValidationError(f"unsupported view_name: {view_name!r}")
+
+        params = params or {}
+        limit = max(1, min(int(params.get('limit', 50)), 1000))
+        offset = max(0, int(params.get('offset', 0)))
+
+        rows = self._fetch_all(
+            f"SELECT * FROM {view_name} LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+
+        return {
+            'view': view_name,
+            'limit': limit,
+            'offset': offset,
+            'row_count': len(rows),
+            'items': rows,
+        }
 
     def _initialize_fts(self) -> None:
         fts_schema = """
@@ -422,13 +555,8 @@ class DatabaseManager:
                 "mcp_read_defaults": {
                     "compact": True,
                     "tools": [
-                        "get_project_state",
-                        "get_open_tasks",
-                        "get_decision_log",
-                        "get_architecture_summary",
-                        "get_recent_reasoning",
-                        "get_dependency_view",
-                        "get_recent_activity",
+                        "query_view",
+                        "get_database_health",
                         "get_entity_graph",
                     ],
                     "opt_out": "Pass compact=false when a fuller response is needed.",
@@ -958,6 +1086,59 @@ class DatabaseManager:
         if content is None:
             raise ValidationError(f"content {content_id!r} was not persisted")
         return content
+
+    def write_content(
+        self,
+        entity_id: str,
+        mode: str,
+        content: str,
+        content_type: str,
+    ) -> dict[str, Any]:
+        entity_id = _validate_identifier(entity_id, "entity id")
+        mode = (mode or "").strip().lower()
+        if mode not in {"append", "replace"}:
+            raise ValidationError("mode must be 'append' or 'replace'")
+
+        content_type = content_type.strip().lower()
+        if content_type not in {"text", "markdown", "json"}:
+            raise ValidationError("content_type must be one of 'text', 'markdown', 'json'")
+
+        normalized_body = (content or "").strip()
+        if not normalized_body:
+            raise ValidationError("content must not be empty")
+
+        # Ensure the target entity exists
+        if not self._fetch_one("SELECT 1 FROM entities WHERE id = ?", (entity_id,)):
+            raise ValidationError(f"entity {entity_id!r} does not exist")
+
+        content_id = _generated_id(content_type)
+
+        with self._transaction() as connection:
+            if mode == "replace":
+                connection.execute(
+                    "DELETE FROM content WHERE entity_id = ? AND content_type = ?",
+                    (entity_id, content_type),
+                )
+
+            connection.execute(
+                "INSERT INTO content (id, entity_id, content_type, body) VALUES (?, ?, ?, ?)",
+                (content_id, entity_id, content_type, normalized_body),
+            )
+            self._touch_entity(connection, entity_id)
+            self._record_event(
+                connection,
+                entity_id,
+                f"content.{mode}",
+                {"content_id": content_id, "content_type": content_type},
+            )
+
+        content_row = self._fetch_one(
+            "SELECT id, entity_id, content_type, body, created_at FROM content WHERE id = ?",
+            (content_id,),
+        )
+        if content_row is None:
+            raise ValidationError(f"content {content_id!r} was not persisted")
+        return content_row
 
     def append_content(
         self,

@@ -17,7 +17,7 @@ This enforces a single-write architecture:
 ## Behavior expectations
 - If asked to add a note/task/decision, respond with instructions or code that uses SQLite MCP tools, not `Path(...).write_text(...)` to generate md.
 - If asked to export or render documentation, use `sqlite-project-memory-admin export-views --user-requested --request-reason ...` or MCP RPC equivalent.
-- If asked to read current project state, query the DB via MCP tools (`get_project_state`, `list_entities`, `get_recent_activity`, etc.) rather than reading `*.md` files.
+- If asked to read current project state, query the DB via MCP tools (`query_view` for summaries, `list_entities`, `get_recent_activity`, etc.) rather than reading `*.md` files.
 
 ## Scope
 - Allowed markdown operations:

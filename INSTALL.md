@@ -69,6 +69,15 @@ sqlite-project-memory-admin project-state
 sqlite-project-memory-admin health
 ```
 
+## 7. MCP client configuration
+
+The installer now writes only the global MCP host config at:
+`%APPDATA%\Code - Insiders\User\mcp.json`
+
+This avoids per-project `.vscode/mcp.json` collisions and ensures a consistent handler across projects.
+
+If you need project-specific behavior, use `get_project_context`/`set_project_root` in the MCP API.
+
 ## 7. Common workflow notes
 
 - This project treats SQLite as the authoritative memory store.
