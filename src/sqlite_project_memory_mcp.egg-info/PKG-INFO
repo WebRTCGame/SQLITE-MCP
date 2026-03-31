@@ -48,6 +48,8 @@ chmod +x ./install.sh
 ./install.sh --project-root ".." --migrate-existing --use-project-config --ci --log-file install.log
 ```
 
+> Note: If your host project folder is not the checkout path or does not contain `pyproject.toml`, the install scripts will detect that and use the script checkout as the Python package source for `pip install -e`. The `Project Memory` folder still holds runtime state (`pm_data`, `.venv`, `pm_exports`).
+
 ### Option A: pip only
 
 ```powershell

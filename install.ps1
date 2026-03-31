@@ -375,7 +375,34 @@ if (-Not $alreadyInstalled) {
 if ($projectRootOriginal -and $scriptRoot -and ($projectRootOriginal -ne $scriptRoot) -and (Test-Path $projectMemoryFolder)) {
     $repoFolderName = Split-Path -Path $scriptRoot -Leaf
     $destination = Join-Path $projectMemoryFolder $repoFolderName
-    if (-Not (Test-Path $destination)) {
+
+    # If installer script is in the same folder, defer move to a short-lived helper process after exit.
+    $scriptInvokePath = $MyInvocation.MyCommand.Path
+    if ($scriptInvokePath -and $scriptInvokePath.StartsWith($scriptRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "Installer is running from $scriptRoot; deferring move to helper script."
+        $moveScript = Join-Path $env:TEMP "move-sqlite-mcp-$([guid]::NewGuid()).ps1"
+        $helper = @"
+Start-Sleep -Seconds 3
+`$src = '$scriptRoot'
+`$dst = '$destination'
+for (`$attempt=1; `$attempt -le 30; `$attempt++) {
+    try {
+        if (-Not (Test-Path `$dst)) {
+            Move-Item -Path `$src -Destination `$dst -Force
+            break
+        }
+        break
+    } catch {
+        Start-Sleep -Seconds 1
+    }
+}
+Remove-Item -Path '$moveScript' -Force -ErrorAction SilentlyContinue
+"@
+        Set-Content -Path $moveScript -Value $helper -Encoding UTF8
+
+        Start-Process -FilePath "powershell" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$moveScript" -WindowStyle Hidden
+        Write-Host "Launched deferred mover script at $moveScript"
+    } elseif (-Not (Test-Path $destination)) {
         Write-Host "Moving installer folder from $scriptRoot into Project Memory at $destination"
         Move-Item -Path $scriptRoot -Destination $destination
         Write-Host "Moved installer folder into Project Memory."

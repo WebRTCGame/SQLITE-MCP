@@ -218,12 +218,38 @@ script_root="$(dirname "$(readlink -f "$0")")"
 if [ "$repo_root" != "$script_root" ] && [ -d "$project_memory" ]; then
   repo_folder_name="$(basename "$script_root")"
   destination="$project_memory/$repo_folder_name"
-  if [ ! -d "$destination" ]; then
-    echo "Moving installer folder $script_root into $destination"
-    mv "$script_root" "$destination"
-    echo "Moved installer folder into Project Memory."
+
+  # avoid moving an executing script directory directly; defer to helper
+  if lsof +D "$script_root" >/dev/null 2>&1; then
+    echo "Installer is running from $script_root; deferring move to helper script."
+    mover_script="$TEMP/move-sqlite-mcp-$(uuidgen).sh"
+    cat > "$mover_script" <<'EOF'
+#!/usr/bin/env bash
+src="$script_root"
+dst="$destination"
+for i in {1..30}; do
+  if [ ! -d "$dst" ]; then
+    if mv "$src" "$dst"; then
+      break
+    fi
   else
-    echo "Destination $destination already exists; skipping move."
+    break
+  fi
+  sleep 1
+done
+rm -f "$mover_script"
+EOF
+    chmod +x "$mover_script"
+    nohup bash "$mover_script" >/dev/null 2>&1 &
+    echo "Launched deferred mover script: $mover_script"
+  else
+    if [ ! -d "$destination" ]; then
+      echo "Moving installer folder $script_root into $destination"
+      mv "$script_root" "$destination"
+      echo "Moved installer folder into Project Memory."
+    else
+      echo "Destination $destination already exists; skipping move."
+    fi
   fi
 fi
 
