@@ -36,23 +36,27 @@ if ($LogFile) {
 $ErrorActionPreference = 'Stop'
 Write-Host "=== SQLite MCP install script started ==="
 
-# Determine project root (explicit override or script location)
+# Determine project root (explicit override or nearest parent)
+$scriptRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 if ($ProjectRoot) {
-    $repoRoot = (Resolve-Path -Path $ProjectRoot).Path
+    $projectRoot = (Resolve-Path -Path $ProjectRoot).Path
 } else {
-    $repoRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+    if ([System.IO.Path]::GetFileName($scriptRoot) -ieq 'sqlite-mcp') {
+        $projectRoot = Split-Path $scriptRoot -Parent
+    } else {
+        $projectRoot = $scriptRoot
+    }
 }
 
-Write-Host "Using project root: $repoRoot"
-Set-Location $repoRoot
+Write-Host "Using project root: $projectRoot"
+Set-Location $projectRoot
 
-if (-Not (Test-Path pyproject.toml)) {
-    Write-Error "pyproject.toml not found in $repoRoot. Please execute from project root or pass -ProjectRoot <path>."
-    exit 1
+if (-Not (Test-Path (Join-Path $projectRoot 'pyproject.toml'))) {
+    Write-Warning "pyproject.toml not found in $projectRoot. Proceeding anyway (assumed external host project)."
 }
 
 # Create a self-contained project memory folder
-$projectMemoryFolder = Join-Path $repoRoot 'Project Memory'
+$projectMemoryFolder = Join-Path $projectRoot 'Project Memory'
 if (-Not (Test-Path $projectMemoryFolder)) {
     Write-Host "Creating self-contained folder: $projectMemoryFolder"
     New-Item -ItemType Directory -Path $projectMemoryFolder | Out-Null
@@ -220,7 +224,7 @@ function Get-McpConfigPath {
     }
 
     if ($useProject) {
-        $projectVscode = Join-Path $repoRoot '.vscode'
+        $projectVscode = Join-Path $projectRoot '.vscode'
         if (-Not (Test-Path $projectVscode)) { New-Item -ItemType Directory -Path $projectVscode | Out-Null }
         return Join-Path $projectVscode 'mcp.json'
     }
@@ -239,7 +243,7 @@ function Get-McpConfigPath {
     }
 
     # default to project config
-    $projectVscode = Join-Path $repoRoot '.vscode'
+    $projectVscode = Join-Path $projectRoot '.vscode'
     if (-Not (Test-Path $projectVscode)) { New-Item -ItemType Directory -Path $projectVscode | Out-Null }
     return Join-Path $projectVscode 'mcp.json'
 }
@@ -318,6 +322,19 @@ if (-Not $alreadyInstalled) {
     Write-Host "Created install marker: $installationMarker"
 } else {
     Write-Host "Install marker already present: $installationMarker"
+}
+
+# Cleanup: if we are running from a nested sqlite-mcp checkout, move that folder into Project Memory
+if ($projectRoot -and $scriptRoot -and ($projectRoot -ne $scriptRoot) -and (Test-Path $projectMemoryFolder)) {
+    $repoFolderName = Split-Path -Path $scriptRoot -Leaf
+    $destination = Join-Path $projectMemoryFolder $repoFolderName
+    if (-Not (Test-Path $destination)) {
+        Write-Host "Moving installer folder from $scriptRoot into Project Memory at $destination"
+        Move-Item -Path $scriptRoot -Destination $destination
+        Write-Host "Moved installer folder into Project Memory."
+    } else {
+        Write-Host "Destination $destination already exists; skipping move."
+    }
 }
 
 Write-Host "All done! To run server: python -m sqlite_mcp_server"

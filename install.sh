@@ -193,4 +193,18 @@ if [ ! -f "$installation_marker" ]; then
   echo "Created install marker: $installation_marker"
 fi
 
+# Cleanup: if running from a nested sqlite-mcp folder, move it into Project Memory
+script_root="$(dirname "$(readlink -f "$0")")"
+if [ "$repo_root" != "$script_root" ] && [ -d "$project_memory" ]; then
+  repo_folder_name="$(basename "$script_root")"
+  destination="$project_memory/$repo_folder_name"
+  if [ ! -d "$destination" ]; then
+    echo "Moving installer folder $script_root into $destination"
+    mv "$script_root" "$destination"
+    echo "Moved installer folder into Project Memory."
+  else
+    echo "Destination $destination already exists; skipping move."
+  fi
+fi
+
 echo "Install complete. Run: ${project_memory}/.venv/bin/python -m sqlite_mcp_server"

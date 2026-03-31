@@ -31,11 +31,11 @@ SQLite-backed MCP server for storing project memory as a graph-friendly relation
 # from project parent folder
 git clone https://github.com/WebRTCGame/SQLITE-MCP.git sqlite-mcp
 cd sqlite-mcp
-.\install.ps1 -ProjectRoot "$PWD" -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
+.\install.ps1 -ProjectRoot ".." -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
 
 # OR on Linux/macOS
 chmod +x ./install.sh
-./install.sh --project-root "$PWD" --migrate-existing --use-project-config --ci --log-file install.log
+./install.sh --project-root ".." --migrate-existing --use-project-config --ci --log-file install.log
 ```
 
 ### Option A: pip only
