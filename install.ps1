@@ -184,7 +184,10 @@ $venvPython = Join-Path $venvPath 'Scripts\python.exe'
 & $venvPython -m pip install -e $repoRoot
 
 Write-Host "Bootstrapping project memory..."
-sqlite-project-memory-admin bootstrap-self --repo-root $repoRoot
+$env:SQLITE_MCP_DB_PATH = $dbPath
+$env:SQLITE_MCP_EXPORT_DIR = $exportDir
+
+sqlite-project-memory-admin bootstrap-self --repo-root $repoRoot --db-path $dbPath
 
 Write-Host "Checking for running sqlite_mcp_server processes..."
 $runningMcp = Get-CimInstance Win32_Process | Where-Object {
@@ -212,8 +215,8 @@ if ($null -eq $sqliteProjectMemoryAdmin) {
     exit 1
 }
 
-sqlite-project-memory-admin project-state
-sqlite-project-memory-admin health
+sqlite-project-memory-admin project-state --db-path $dbPath
+sqlite-project-memory-admin health --db-path $dbPath
 
 # Determine MCP config path in a friendly way
 function Get-McpConfigPath {

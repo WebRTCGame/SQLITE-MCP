@@ -121,15 +121,18 @@ source "$project_memory/.venv/bin/activate"
 pip install --upgrade pip
 pip install -e "$repo_root"
 
-sqlite-project-memory-admin bootstrap-self --repo-root "$repo_root"
+export SQLITE_MCP_DB_PATH="$project_memory/pm_data/project_memory.db"
+export SQLITE_MCP_EXPORT_DIR="$project_memory/pm_exports"
+
+sqlite-project-memory-admin bootstrap-self --repo-root "$repo_root" --db-path "$SQLITE_MCP_DB_PATH"
 
 if ! command -v sqlite-project-memory-admin >/dev/null 2>&1; then
   echo "sqlite-project-memory-admin command not found after install."
   exit 1
 fi
 
-sqlite-project-memory-admin project-state
-sqlite-project-memory-admin health
+sqlite-project-memory-admin project-state --db-path "$SQLITE_MCP_DB_PATH"
+sqlite-project-memory-admin health --db-path "$SQLITE_MCP_DB_PATH"
 
 get_mcp_config_path() {
   if [ -n "$MCP_CONFIG_PATH" ]; then
