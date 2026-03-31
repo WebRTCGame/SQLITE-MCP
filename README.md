@@ -138,7 +138,7 @@ Environment variables:
 - Create `.scripts/post_install.ps1` (PowerShell) or `.scripts/post_install.sh`.
 - The install script executes the hook if present.
 
-## Quick start
+## Quick start (Windows)
 
 1. Clone the repo.
 2. Run the one-shot installer (from checkout):
@@ -156,6 +156,28 @@ Environment variables:
    ```
 5. Start the server:
    ```powershell
+   python -m sqlite_mcp_server
+   ```
+
+## Quick start (Linux/macOS)
+
+1. Clone the repo.
+2. Run the one-shot installer (from checkout):
+   ```bash
+   chmod +x ./install.sh
+   ./install.sh --project-root . --migrate-existing --use-project-config --ci --log-file install.log
+   ```
+3. Activate runtime venv:
+   ```bash
+   source "Project Memory/.venv/bin/activate"
+   ```
+4. Run self-check:
+   ```bash
+   sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" project-state
+   sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" health
+   ```
+5. Start the server:
+   ```bash
    python -m sqlite_mcp_server
    ```
 

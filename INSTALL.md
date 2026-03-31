@@ -60,6 +60,26 @@ Or if cloning an existing repo:
 git clone https://github.com/WebRTCGame/SQLITE-MCP.git .
 ```
 
+## 2. One-shot install and self-check
+
+### Windows (PowerShell)
+```powershell
+.\install.ps1 -ProjectRoot . -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
+.\Project Memory\.venv\Scripts\Activate.ps1
+sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" project-state
+sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" health
+```
+
+### Linux/macOS (bash)
+```bash
+chmod +x ./install.sh
+./install.sh --project-root . --migrate-existing --use-project-config --ci --log-file install.log
+source "Project Memory/.venv/bin/activate"
+sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" project-state
+sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" health
+```
+```
+
 ## 2. Open folder in VS Code Insiders
 
 - Launch VS Code Insiders
