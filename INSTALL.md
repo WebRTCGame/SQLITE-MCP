@@ -7,6 +7,10 @@ This guide assumes:
 - A new empty project folder with `git init` already run
 - No existing Python virtual environment in the folder
 
+## 0. Keep local files up to date (new install behavior)
+
+If you re-run `install.ps1`, it now syncs your working tree from `origin` first (auto `git fetch` and `git pull --ff-only`), so local code reflects the latest GitHub changes. Existing database state at `data/project_memory.db` is preserved.
+
 ## 1. Clone or initialize project
 
 ```powershell

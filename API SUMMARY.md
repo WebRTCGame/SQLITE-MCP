@@ -74,8 +74,23 @@ This file provides a compact reference for the MCP server toolset and integratio
 
 - `create_snapshot` (done, covered, active)
 - `get_snapshot` (done, covered, active)
+- `sync_document` (new target list support):
+  - `architecture`, `decisions`, `plan`, `notes`, `roadmap`
+  - `kpi`, `okr`, `strategy`, `risk`, `issue`, `epic`, `story`, `feature`,
+  - `milestone`, `release`, `dependency`, `objective`, `initiative`, `metric`,
+  - `capability`, `assumption`, `problem_statement`, `retrospective`, `action_item`
 
-## Summary/report tools (via query_view)
+## Maintenance tools
+
+- `run_read_query` (read only: SELECT/WITH/PRAGMA/EXPLAIN, no writes)
+- `render_markdown_views` (strict user_requested policy)
+- `export_markdown_views` (strict user_requested + force + require_existing_dir policy)
+- `prune_content_retention`
+- `bootstrap_project_memory`
+- `apply_performance_tuning`
+- `refresh_task_summary`
+
+## Context and management tools
 
 - `list_views` returns all supported summary views: `open_tasks`, `project_state`, `project_summary`, `decision_log`, `architecture_summary`, `recent_reasoning`, `dependency_view`, `recent_activity`, `entity_graph`.
 - `query_view` now consolidates all projection views, including `open_tasks`, `project_state`, `project_summary`, `decision_log`, `architecture_summary`, `recent_reasoning`, `dependency_view`, `recent_activity`, `entity_graph`.

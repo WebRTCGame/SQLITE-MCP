@@ -130,8 +130,10 @@ sqlite-project-memory-admin health
 sqlite-project-memory-admin export-views --user-requested --request-reason "User asked for a roadmap export" --require-existing-dir exports todo roadmap architecture
 sqlite-project-memory-admin export-views --user-requested --request-reason "User asked for refreshed generated docs" --force todo roadmap architecture
 sqlite-project-memory-admin sync-document architecture --input-path architecture.md
-sqlite-project-memory-admin sync-document decisions --input-path decisions.md
-sqlite-project-memory-admin export-json --output-path exports/project_memory.snapshot.json
+sqlite-project-memory-admin sync-document decisions --input-path decisions.md# New supported sync-document targets:
+# kpi, okr, roadmap, strategy, risk, issue, epic, story, feature,
+# milestone, release, dependency, objective, initiative, metric,
+# capability, assumption, problem_statement, retrospective, action_itemsqlite-project-memory-admin export-json --output-path exports/project_memory.snapshot.json
 sqlite-project-memory-admin import-json --input-path exports/project_memory.snapshot.json
 ```
 
