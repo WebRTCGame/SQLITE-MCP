@@ -113,7 +113,12 @@ if [ -z "$python_exec" ]; then
 fi
 
 if [ ! -d "$project_memory/.venv" ]; then
-  "$python_exec" -m venv "$project_memory/.venv"
+  if ! "$python_exec" -m venv "$project_memory/.venv"; then
+    echo "Warning: venv creation failed; retrying with --without-pip fallback."
+    "$python_exec" -m venv --without-pip "$project_memory/.venv"
+    "$project_memory/.venv/bin/python" -m ensurepip --default-pip
+    "$project_memory/.venv/bin/python" -m pip install --upgrade pip
+  fi
 fi
 
 source "$project_memory/.venv/bin/activate"

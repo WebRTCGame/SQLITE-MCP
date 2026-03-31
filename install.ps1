@@ -162,7 +162,16 @@ if (-Not $currentRemote) {
 $venvPath = Join-Path $projectMemoryFolder '.venv'
 if (-Not (Test-Path $venvPath)) {
     Write-Host "Creating Python virtual environment in $venvPath..."
-    python -m venv $venvPath
+    try {
+        python -m venv $venvPath
+    } catch {
+        Write-Warning "Python venv creation failed, trying with --without-pip fallback. Error: $_"
+        python -m venv $venvPath --without-pip
+        $fallbackPython = Join-Path $venvPath 'Scripts\python.exe'
+        Write-Host "Bootstrapping pip in fallback venv..."
+        & $fallbackPython -m ensurepip --default-pip
+        & $fallbackPython -m pip install --upgrade pip
+    }
 } else {
     Write-Host ".venv already exists at $venvPath, skipping creation."
 }
