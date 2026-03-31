@@ -123,6 +123,11 @@ pip install -e "$repo_root"
 
 sqlite-project-memory-admin bootstrap-self --repo-root "$repo_root"
 
+if ! command -v sqlite-project-memory-admin >/dev/null 2>&1; then
+  echo "sqlite-project-memory-admin command not found after install."
+  exit 1
+fi
+
 sqlite-project-memory-admin project-state
 sqlite-project-memory-admin health
 
