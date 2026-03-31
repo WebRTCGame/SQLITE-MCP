@@ -142,6 +142,18 @@ deactivate
 
 ## 11. Bash/macOS/Linux install
 
+### AI-friendly one-shot
+
+```bash
+cd /path/to/project/root
+# clone the installer repository
+git clone https://github.com/YOUR_ORG/SQLITE-MCP.git sqlite-mcp
+cd sqlite-mcp
+# run installer explicitly in project path
+chmod +x ./install.sh
+./install.sh --project-root "$PWD" --migrate-existing --use-project-config --ci --log-file install.log
+```
+
 1. Make script executable `chmod +x ./install.sh`
 2. Run `./install.sh`
 3. Options:

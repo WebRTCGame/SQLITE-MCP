@@ -14,7 +14,8 @@ param(
     [switch]$FetchOnly,
     [string]$Branch,
     [switch]$NonInteractive,
-    [string]$LogFile
+    [string]$LogFile,
+    [string]$ProjectRoot
 )
 
 if ($NonInteractive) {
@@ -35,12 +36,18 @@ if ($LogFile) {
 $ErrorActionPreference = 'Stop'
 Write-Host "=== SQLite MCP install script started ==="
 
-# Ensure we are in repo root (containing pyproject.toml)
-$repoRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+# Determine project root (explicit override or script location)
+if ($ProjectRoot) {
+    $repoRoot = (Resolve-Path -Path $ProjectRoot).Path
+} else {
+    $repoRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+}
+
+Write-Host "Using project root: $repoRoot"
 Set-Location $repoRoot
 
 if (-Not (Test-Path pyproject.toml)) {
-    Write-Error "pyproject.toml not found. Run this script from project root."
+    Write-Error "pyproject.toml not found in $repoRoot. Please execute from project root or pass -ProjectRoot <path>."
     exit 1
 }
 

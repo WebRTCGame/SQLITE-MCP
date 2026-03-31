@@ -12,6 +12,7 @@ FETCH_ONLY=false
 BRANCH=""
 CI=false
 LOG_FILE=""
+PROJECT_ROOT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,13 +23,20 @@ while [[ $# -gt 0 ]]; do
     --branch) BRANCH="$2"; shift 2 ;; 
     --ci) CI=true; shift ;; 
     --log-file) LOG_FILE="$2"; shift 2 ;; 
+    --project-root) PROJECT_ROOT="$2"; shift 2 ;; 
     *) echo "Unknown option: $1"; exit 1 ;; 
   esac
 done
 
-repo_root="$(pwd)"
+if [ -n "$PROJECT_ROOT" ]; then
+  repo_root="$PROJECT_ROOT"
+else
+  repo_root="$(pwd)"
+fi
 project_memory="$repo_root/Project Memory"
 installation_marker="$project_memory/.install-complete"
+
+printf 'Using project root: %s\n' "$repo_root"
 
 if [ "$LOG_FILE" ]; then
   echo "Logging to $LOG_FILE"
