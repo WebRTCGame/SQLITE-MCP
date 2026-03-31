@@ -11,6 +11,7 @@ MCP_CONFIG_PATH=""
 FETCH_ONLY=false
 BRANCH=""
 CI=false
+LOG_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -20,12 +21,23 @@ while [[ $# -gt 0 ]]; do
     --fetch-only) FETCH_ONLY=true; shift ;; 
     --branch) BRANCH="$2"; shift 2 ;; 
     --ci) CI=true; shift ;; 
+    --log-file) LOG_FILE="$2"; shift 2 ;; 
     *) echo "Unknown option: $1"; exit 1 ;; 
   esac
 done
 
 repo_root="$(pwd)"
 project_memory="$repo_root/Project Memory"
+installation_marker="$project_memory/.install-complete"
+
+if [ "$LOG_FILE" ]; then
+  echo "Logging to $LOG_FILE"
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
+
+if [ -f "$installation_marker" ]; then
+  echo "Install marker already exists. Running in idempotent mode."
+fi
 
 if [ ! -f "$repo_root/pyproject.toml" ]; then
   echo "pyproject.toml not found; run from repository root"
@@ -55,6 +67,11 @@ if [ ! -d "$repo_root/.git" ]; then
   git init
 else
   echo "Git repo already initialized." 
+fi
+
+NON_INTERACTIVE=false
+if [ "$CI" = true ]; then
+  NON_INTERACTIVE=true
 fi
 
 if [ -n "$BRANCH" ]; then
@@ -122,24 +139,50 @@ get_mcp_config_path() {
 
 mcp_config_path="$(get_mcp_config_path)"
 
-cat > "$mcp_config_path" <<JSON
-{
-  "servers": {
-    "sqlite-project-memory": {
-      "type": "stdio",
-      "command": "${project_memory}/.venv/bin/python",
-      "args": ["-m", "sqlite_mcp_server"],
-      "env": {
+python - <<PY
+import json, pathlib
+config_path = pathlib.Path(r"$mcp_config_path")
+server_entry = {
+    "type": "stdio",
+    "command": f"{project_memory}/.venv/bin/python",
+    "args": ["-m", "sqlite_mcp_server"],
+    "env": {
         "SQLITE_MCP_TRANSPORT": "stdio",
-        "SQLITE_MCP_DB_PATH": "${project_memory}/pm_data/project_memory.db",
-        "SQLITE_MCP_EXPORT_DIR": "${project_memory}/pm_exports"
-      }
+        "SQLITE_MCP_DB_PATH": f"{project_memory}/pm_data/project_memory.db",
+        "SQLITE_MCP_EXPORT_DIR": f"{project_memory}/pm_exports"
     }
-  },
-  "inputs": []
 }
-JSON
+if config_path.exists():
+    data = json.loads(config_path.read_text(encoding='utf-8'))
+else:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+servers = data.get("servers")
+if not isinstance(servers, dict):
+    servers = {}
+servers["sqlite-project-memory"] = server_entry
+
+data["servers"] = servers
+if "inputs" not in data or not isinstance(data["inputs"], list):
+    data["inputs"] = []
+config_path.parent.mkdir(parents=True, exist_ok=True)
+config_path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+PY
 
 echo "Wrote MCP config: $mcp_config_path"
+
+# Post-install hook support
+post_install_hook="$repo_root/.scripts/post_install.sh"
+if [ -f "$post_install_hook" ]; then
+  echo "Running post-install hook: $post_install_hook"
+  bash "$post_install_hook" --ci=${CI} --non-interactive=${NON_INTERACTIVE:-false} || echo "Post-install hook failed"
+fi
+
+# Install marker for idempotence
+if [ ! -f "$installation_marker" ]; then
+  touch "$installation_marker"
+  echo "Created install marker: $installation_marker"
+fi
 
 echo "Install complete. Run: ${project_memory}/.venv/bin/python -m sqlite_mcp_server"

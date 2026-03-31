@@ -13,7 +13,8 @@ param(
     [switch]$CiMode,
     [switch]$FetchOnly,
     [string]$Branch,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [string]$LogFile
 )
 
 if ($NonInteractive) {
@@ -24,6 +25,11 @@ if ($CiMode) {
     $UseProjectConfig = $true
     $NonInteractive = $true
     $ConfirmPreference = 'None'
+}
+
+if ($LogFile) {
+    Write-Host "Logging to $LogFile"
+    Start-Transcript -Path $LogFile -Append -Force
 }
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +51,13 @@ if (-Not (Test-Path $projectMemoryFolder)) {
     New-Item -ItemType Directory -Path $projectMemoryFolder | Out-Null
 }
 
+# Determine install status with marker
+$installationMarker = Join-Path $projectMemoryFolder '.install-complete'
+$alreadyInstalled = Test-Path $installationMarker
+if ($alreadyInstalled) {
+    Write-Host "Install marker found at $installationMarker. Re-running install; migration will only occur with -MigrateExisting."
+}
+
 # Optionally migrate existing project artifacts into Project Memory folder
 $moveMappings = @(
     @{ Source = Join-Path $repoRoot '.venv'; Destination = Join-Path $projectMemoryFolder '.venv'; Label = '.venv' },
@@ -57,6 +70,11 @@ foreach ($mapping in $moveMappings) {
         Write-Host "Destination already exists for $($mapping.Label), leaving both in place:"
         Write-Host "  source: $($mapping.Source)"
         Write-Host "  destination: $($mapping.Destination)"
+        continue
+    }
+
+    if ($alreadyInstalled -and -Not $MigrateExisting) {
+        Write-Host "Already installed; not migrating $($mapping.Label). Use -MigrateExisting to force move."
         continue
     }
 
@@ -247,8 +265,8 @@ $exportDir = Join-Path $projectRoot 'pm_exports'
 if (-Not (Test-Path (Split-Path $dbPath))) { New-Item -ItemType Directory -Path (Split-Path $dbPath) -Force | Out-Null }
 if (-Not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force | Out-Null }
 
-# Configure machine-global MCP host config only. Per-project workspace config is intentionally skipped.
-# This avoids duplicate settings and centralizes the registered under Code Insiders user scope.
+# Configure MCP host config in selected path (project or global as requested).
+# Per-project workspace config is default except when -UseGlobalConfig is provided.
 $serverEntry = [pscustomobject]@{
     type = 'stdio'
     command = $venvPython
@@ -287,4 +305,18 @@ if (Test-Path $postInstallHook) {
     }
 }
 
+# Write install completion marker for idempotence
+if (-Not $alreadyInstalled) {
+    New-Item -ItemType File -Path $installationMarker -Force | Out-Null
+    Write-Host "Created install marker: $installationMarker"
+} else {
+    Write-Host "Install marker already present: $installationMarker"
+}
+
 Write-Host "All done! To run server: python -m sqlite_mcp_server"
+
+if ($LogFile) {
+    Stop-Transcript
+    Write-Host "Transcript saved to $LogFile"
+}
+
