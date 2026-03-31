@@ -2889,9 +2889,9 @@ class DatabaseManager:
                 "markdown view generation is locked; only generate views after an explicit user request and pass user_requested=True"
             )
         normalized_reason = _normalize_text(request_reason)
-        if normalized_reason is None or len(normalized_reason) < 12:
+        if normalized_reason is None or len(normalized_reason) < 8:
             raise ValidationError(
-                "request_reason must describe the user's explicit request and be at least 12 characters long"
+                "request_reason must describe the user's explicit request and be at least 8 characters long"
             )
         return normalized_reason
 

@@ -141,9 +141,23 @@ Environment variables:
 ## Quick start
 
 1. Clone the repo.
-2. Run `install.ps1` or `install.sh`.
-3. Run `python -m sqlite_mcp_server`.
-4. Run admin CLI checks.
+2. Run the one-shot installer (from checkout):
+   ```powershell
+   .\install.ps1 -ProjectRoot . -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
+   ```
+3. Activate runtime venv:
+   ```powershell
+   .\Project Memory\.venv\Scripts\Activate.ps1
+   ```
+4. Run self-check:
+   ```powershell
+   sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" project-state
+   sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" health
+   ```
+5. Start the server:
+   ```powershell
+   python -m sqlite_mcp_server
+   ```
 
 ## Notes
 

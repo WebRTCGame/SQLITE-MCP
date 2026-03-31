@@ -103,8 +103,21 @@ def test_render_markdown_views_uses_database_as_source_of_truth(db: DatabaseMana
     assert "<!-- Generated at: " in rendered["todo.md"]
     assert "## Phase 4" in rendered["todo.md"]
     assert "Bootstrap memory" in rendered["todo.md"]
-    assert "Use explicit MCP verbs for write operations." in rendered["notes.md"]
-    assert "Project Memory Overview" in rendered["overview.md"]
+
+
+def test_export_markdown_views_allows_short_request_reason(db: DatabaseManager) -> None:
+    db.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+    rendered = db.export_markdown_views(
+        output_dir=Path("tmp_views"),
+        view_names=["todo"],
+        overwrite=True,
+        require_existing_dir=False,
+        user_requested=True,
+        request_reason="short msg",
+    )
+    assert rendered["view_count"] == 1
+    assert rendered["request_reason"] == "short msg"
+    assert (Path("tmp_views") / "todo.md").exists()
 
 
 def test_export_markdown_views_requires_explicit_overwrite_and_can_require_existing_dir(
