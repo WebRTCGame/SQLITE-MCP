@@ -13,6 +13,8 @@ If you re-run `install.ps1`, it now syncs your working tree from `origin` first 
 
 If the target repository already has `./data` or `./exports`, they are not moved by default. To migrate existing project artifacts into the self-contained `Project Memory` folder (to `pm_data` and `pm_exports`), run:
 
+If the path you pass with `--project-root` does not contain `pyproject.toml`, the installer will use the checkout location (`sqlite-mcp`) as the source for `pip install -e` and still write runtime state under `Project Memory`.
+
 ```powershell
 .\install.ps1 -MigrateExisting
 ```

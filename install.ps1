@@ -59,6 +59,15 @@ if (-Not (Test-Path (Join-Path $projectRoot 'pyproject.toml'))) {
     Write-Warning "pyproject.toml not found in $projectRoot. Proceeding anyway (assumed external host project)."
 }
 
+# Source root is the Python project used for pip install; prefer current script checkout when host is external
+$sourceRoot = $projectRoot
+if (-Not (Test-Path (Join-Path $sourceRoot 'pyproject.toml'))) {
+    if (Test-Path (Join-Path $scriptRoot 'pyproject.toml')) {
+        $sourceRoot = $scriptRoot
+        Write-Host "Using script location as source root for pip install: $sourceRoot"
+    }
+}
+
 # Create a self-contained project memory folder
 $projectMemoryFolder = Join-Path $projectRoot 'Project Memory'
 if (-Not (Test-Path $projectMemoryFolder)) {
@@ -209,16 +218,16 @@ Write-Host "Activating virtual environment..."
 . $activateScript
 
 Write-Host "Installing dependencies..."
-Set-Location $repoRoot
+Set-Location $sourceRoot
 $venvPython = Join-Path $venvPath 'Scripts\python.exe'
 & $venvPython -m pip install --upgrade pip
-& $venvPython -m pip install -e $repoRoot
+& $venvPython -m pip install -e $sourceRoot
 
 Write-Host "Bootstrapping project memory..."
 $env:SQLITE_MCP_DB_PATH = $dbPath
 $env:SQLITE_MCP_EXPORT_DIR = $exportDir
 
-sqlite-project-memory-admin bootstrap-self --repo-root $repoRoot --db-path $dbPath
+sqlite-project-memory-admin --db-path $dbPath bootstrap-self --repo-root $projectRoot
 
 Write-Host "Checking for running sqlite_mcp_server processes..."
 $runningMcp = Get-CimInstance Win32_Process | Where-Object {
@@ -246,8 +255,8 @@ if ($null -eq $sqliteProjectMemoryAdmin) {
     exit 1
 }
 
-sqlite-project-memory-admin project-state --db-path $dbPath
-sqlite-project-memory-admin health --db-path $dbPath
+sqlite-project-memory-admin --db-path $dbPath project-state
+sqlite-project-memory-admin --db-path $dbPath health
 
 # Determine MCP config path in a friendly way
 function Get-McpConfigPath {

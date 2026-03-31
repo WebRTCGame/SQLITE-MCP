@@ -28,6 +28,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [ -n "$PROJECT_ROOT" ]; then
   repo_root="$PROJECT_ROOT"
 else
@@ -48,8 +50,13 @@ if [ -f "$installation_marker" ]; then
 fi
 
 if [ ! -f "$repo_root/pyproject.toml" ]; then
-  echo "pyproject.toml not found; run from repository root"
-  exit 1
+  echo "WARNING: pyproject.toml not found in $repo_root. Proceeding anyway (assumed external host project)."
+fi
+
+source_root="$repo_root"
+if [ ! -f "$source_root/pyproject.toml" ] && [ -f "$script_root/pyproject.toml" ]; then
+  source_root="$script_root"
+  echo "Using script location as source root for pip install: $source_root"
 fi
 
 mkdir -p "$project_memory"
@@ -124,20 +131,20 @@ fi
 source "$project_memory/.venv/bin/activate"
 
 pip install --upgrade pip
-pip install -e "$repo_root"
+pip install -e "$source_root"
 
 export SQLITE_MCP_DB_PATH="$project_memory/pm_data/project_memory.db"
 export SQLITE_MCP_EXPORT_DIR="$project_memory/pm_exports"
 
-sqlite-project-memory-admin bootstrap-self --repo-root "$repo_root" --db-path "$SQLITE_MCP_DB_PATH"
+sqlite-project-memory-admin --db-path "$SQLITE_MCP_DB_PATH" bootstrap-self --repo-root "$repo_root"
 
 if ! command -v sqlite-project-memory-admin >/dev/null 2>&1; then
   echo "sqlite-project-memory-admin command not found after install."
   exit 1
 fi
 
-sqlite-project-memory-admin project-state --db-path "$SQLITE_MCP_DB_PATH"
-sqlite-project-memory-admin health --db-path "$SQLITE_MCP_DB_PATH"
+sqlite-project-memory-admin --db-path "$SQLITE_MCP_DB_PATH" project-state
+sqlite-project-memory-admin --db-path "$SQLITE_MCP_DB_PATH" health
 
 get_mcp_config_path() {
   if [ -n "$MCP_CONFIG_PATH" ]; then
