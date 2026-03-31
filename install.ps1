@@ -71,9 +71,9 @@ if ($alreadyInstalled) {
 
 # Optionally migrate existing project artifacts into Project Memory folder
 $moveMappings = @(
-    @{ Source = Join-Path $repoRoot '.venv'; Destination = Join-Path $projectMemoryFolder '.venv'; Label = '.venv' },
-    @{ Source = Join-Path $repoRoot 'data'; Destination = Join-Path $projectMemoryFolder 'pm_data'; Label = 'data' },
-    @{ Source = Join-Path $repoRoot 'exports'; Destination = Join-Path $projectMemoryFolder 'pm_exports'; Label = 'exports' }
+    @{ Source = Join-Path $projectRoot '.venv'; Destination = Join-Path $projectMemoryFolder '.venv'; Label = '.venv' },
+    @{ Source = Join-Path $projectRoot 'data'; Destination = Join-Path $projectMemoryFolder 'pm_data'; Label = 'data' },
+    @{ Source = Join-Path $projectRoot 'exports'; Destination = Join-Path $projectMemoryFolder 'pm_exports'; Label = 'exports' }
 )
 foreach ($mapping in $moveMappings) {
     if (-Not (Test-Path $mapping.Source)) { continue }
@@ -97,8 +97,8 @@ foreach ($mapping in $moveMappings) {
     }
 }
 
-# Git initialize / refresh from remote if available (still in repo root)
-if (-Not (Test-Path "$repoRoot\.git")) {
+# Git initialize / refresh from remote if available (still in project root)
+if (-Not (Test-Path "$projectRoot\.git")) {
     Write-Host "Initializing git repository..."
     git init
 } else {
