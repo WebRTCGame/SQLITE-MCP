@@ -504,6 +504,24 @@ def update_entity(
 
 
 @mcp.tool()
+def append_content(
+    entity_id: str,
+    content_type: str,
+    body: str,
+    content_id: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Add a piece of content to an entity."""
+    assert ctx is not None
+    return _db(ctx).append_content(
+        entity_id=entity_id,
+        content_type=content_type,
+        body=body,
+        content_id=content_id,
+    )
+
+
+@mcp.tool()
 def archive_entity(
     entity_id: str,
     reason: str | None = None,

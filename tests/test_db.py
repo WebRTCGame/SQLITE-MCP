@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sqlite_mcp_server.db import DatabaseManager, ValidationError
+from sqlite_mcp_server.db import DatabaseManager, DOCUMENT_TARGETS, ValidationError
 
 
 @pytest.fixture()
@@ -24,10 +24,10 @@ def test_bootstrap_project_memory_creates_project_and_memory_areas(db: DatabaseM
     )
 
     assert result["project"]["id"] == "project.sqlite-mcp"
-    assert len(result["memory_areas"]) == 6
+    assert len(result["memory_areas"]) == len(DOCUMENT_TARGETS) + 1
 
     relationships = db.list_relationships(entity_id="project.sqlite-mcp", direction="out")
-    assert len(relationships) == 6
+    assert len(relationships) == len(DOCUMENT_TARGETS) + 1
     assert {item["type"] for item in relationships} == {"has_memory_area"}
 
 

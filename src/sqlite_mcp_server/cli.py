@@ -51,7 +51,12 @@ def _slugify_text(value: str) -> str:
 
 
 def _normalize_document_target(target: str) -> str:
-    return target.strip().lower().replace(" ", "_")
+    normalized = target.strip().lower()
+    if not normalized:
+        return ""
+    if normalized in SYNC_DOCUMENT_TARGET_ALIASES:
+        normalized = SYNC_DOCUMENT_TARGET_ALIASES[normalized]
+    return normalized.replace(" ", "_")
 
 
 def _ensure_content(

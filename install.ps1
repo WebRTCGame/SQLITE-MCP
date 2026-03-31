@@ -48,7 +48,11 @@ if ($ProjectRoot) {
     }
 }
 
+# repository root alias for backwards compatibility in this script
+$repoRoot = $projectRoot
+
 Write-Host "Using project root: $projectRoot"
+$projectRootOriginal = $projectRoot
 Set-Location $projectRoot
 
 if (-Not (Test-Path (Join-Path $projectRoot 'pyproject.toml'))) {
@@ -202,13 +206,13 @@ if ($runningMcp) {
 }
 
 Write-Host "Running health checks..."
-sqlite-project-memory-admin project-state
 $sqliteProjectMemoryAdmin = Get-Command sqlite-project-memory-admin -ErrorAction SilentlyContinue
 if ($null -eq $sqliteProjectMemoryAdmin) {
     Write-Error "sqlite-project-memory-admin command not found after install."
     exit 1
 }
 
+sqlite-project-memory-admin project-state
 sqlite-project-memory-admin health
 
 # Determine MCP config path in a friendly way
@@ -267,10 +271,10 @@ if (-Not (Test-Path $mcpConfigPath)) {
     if (-Not $mcp.servers) { $mcp.servers = @{} }
 }
 
-$projectRoot = $projectMemoryFolder
-$venvPython = Join-Path $projectRoot '.venv\Scripts\python.exe'
-$dbPath = Join-Path $projectRoot 'pm_data\project_memory.db'
-$exportDir = Join-Path $projectRoot 'pm_exports'
+$projectMemoryRoot = $projectMemoryFolder
+$venvPython = Join-Path $projectMemoryRoot '.venv\Scripts\python.exe'
+$dbPath = Join-Path $projectMemoryRoot 'pm_data\project_memory.db'
+$exportDir = Join-Path $projectMemoryRoot 'pm_exports'
 
 # Ensure consistent substructure in Project Memory folder
 if (-Not (Test-Path (Split-Path $dbPath))) { New-Item -ItemType Directory -Path (Split-Path $dbPath) -Force | Out-Null }
@@ -325,7 +329,7 @@ if (-Not $alreadyInstalled) {
 }
 
 # Cleanup: if we are running from a nested sqlite-mcp checkout, move that folder into Project Memory
-if ($projectRoot -and $scriptRoot -and ($projectRoot -ne $scriptRoot) -and (Test-Path $projectMemoryFolder)) {
+if ($projectRootOriginal -and $scriptRoot -and ($projectRootOriginal -ne $scriptRoot) -and (Test-Path $projectMemoryFolder)) {
     $repoFolderName = Split-Path -Path $scriptRoot -Leaf
     $destination = Join-Path $projectMemoryFolder $repoFolderName
     if (-Not (Test-Path $destination)) {

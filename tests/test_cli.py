@@ -84,14 +84,14 @@ def test_sync_document_supports_extended_document_targets(tmp_path: Path) -> Non
 
             anchor = manager.get_entity(result["entity_id"], include_related=True)
             assert anchor["attributes"]["source_path"] == str(input_path.resolve())
-            assert any(item["id"] == DOCUMENT_TARGETS[target]["content_id"] for item in anchor["content"])
+            assert any(item["id"] == DOCUMENT_TARGETS[normalized_target]["content_id"] for item in anchor["content"])
 
             # These category targets are meant for sync-document anchors.  
             # Rendering of custom view names is not supported by default.
             # We assert the anchor content exists and can be retrieved.
             content_rows = manager._fetch_all(
                 "SELECT id, body FROM content WHERE entity_id = ? AND id = ?",
-                (result["entity_id"], DOCUMENT_TARGETS[target]["content_id"]),
+                (result["entity_id"], DOCUMENT_TARGETS[normalized_target]["content_id"]),
             )
             assert len(content_rows) == 1
             assert "Auto-sync for" in content_rows[0]["body"]
