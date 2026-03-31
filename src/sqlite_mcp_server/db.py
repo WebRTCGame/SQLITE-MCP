@@ -78,6 +78,106 @@ DOCUMENT_TARGETS = {
         "content_id": "document.notes.current",
         "content_type": "note",
     },
+    "roadmap": {
+        "entity_type": "roadmap",
+        "content_id": "document.roadmap.current",
+        "content_type": "spec",
+    },
+    "kpi": {
+        "entity_type": "kpi",
+        "content_id": "document.kpi.current",
+        "content_type": "spec",
+    },
+    "okr": {
+        "entity_type": "okr",
+        "content_id": "document.okr.current",
+        "content_type": "spec",
+    },
+    "strategy": {
+        "entity_type": "strategy",
+        "content_id": "document.strategy.current",
+        "content_type": "spec",
+    },
+    "risk": {
+        "entity_type": "risk",
+        "content_id": "document.risk.current",
+        "content_type": "spec",
+    },
+    "issue": {
+        "entity_type": "issue",
+        "content_id": "document.issue.current",
+        "content_type": "spec",
+    },
+    "epic": {
+        "entity_type": "epic",
+        "content_id": "document.epic.current",
+        "content_type": "spec",
+    },
+    "story": {
+        "entity_type": "story",
+        "content_id": "document.story.current",
+        "content_type": "spec",
+    },
+    "feature": {
+        "entity_type": "feature",
+        "content_id": "document.feature.current",
+        "content_type": "spec",
+    },
+    "milestone": {
+        "entity_type": "milestone",
+        "content_id": "document.milestone.current",
+        "content_type": "spec",
+    },
+    "release": {
+        "entity_type": "release",
+        "content_id": "document.release.current",
+        "content_type": "spec",
+    },
+    "dependency": {
+        "entity_type": "dependency",
+        "content_id": "document.dependency.current",
+        "content_type": "spec",
+    },
+    "objective": {
+        "entity_type": "objective",
+        "content_id": "document.objective.current",
+        "content_type": "spec",
+    },
+    "initiative": {
+        "entity_type": "initiative",
+        "content_id": "document.initiative.current",
+        "content_type": "spec",
+    },
+    "metric": {
+        "entity_type": "metric",
+        "content_id": "document.metric.current",
+        "content_type": "spec",
+    },
+    "capability": {
+        "entity_type": "capability",
+        "content_id": "document.capability.current",
+        "content_type": "spec",
+    },
+    "assumption": {
+        "entity_type": "assumption",
+        "content_id": "document.assumption.current",
+        "content_type": "spec",
+    },
+    "problem_statement": {
+        "entity_type": "problem_statement",
+        "content_id": "document.problem_statement.current",
+        "content_type": "spec",
+    },
+    "retrospective": {
+        "entity_type": "retrospective",
+        "content_id": "document.retrospective.current",
+        "content_type": "spec",
+    },
+    "action_item": {
+        "entity_type": "action_item",
+        "content_id": "document.action_item.current",
+        "content_type": "spec",
+    },
 }
 
 
@@ -2732,6 +2832,25 @@ class DatabaseManager:
             (f"{project_id}.todo", "todo", "Todo", "active"),
             (f"{project_id}.notes", "notes", "Notes", "active"),
             (f"{project_id}.decisions", "decision_log", "Decision Log", "active"),
+            (f"{project_id}.kpi", "kpi", "KPI", "active"),
+            (f"{project_id}.okr", "okr", "OKR", "active"),
+            (f"{project_id}.strategy", "strategy", "Strategy", "active"),
+            (f"{project_id}.risk", "risk", "Risk", "active"),
+            (f"{project_id}.issue", "issue", "Issue", "active"),
+            (f"{project_id}.epic", "epic", "Epic", "active"),
+            (f"{project_id}.story", "story", "Story", "active"),
+            (f"{project_id}.feature", "feature", "Feature", "active"),
+            (f"{project_id}.milestone", "milestone", "Milestone", "active"),
+            (f"{project_id}.release", "release", "Release", "active"),
+            (f"{project_id}.dependency", "dependency", "Dependency", "active"),
+            (f"{project_id}.objective", "objective", "Objective", "active"),
+            (f"{project_id}.initiative", "initiative", "Initiative", "active"),
+            (f"{project_id}.metric", "metric", "Metric", "active"),
+            (f"{project_id}.capability", "capability", "Capability", "active"),
+            (f"{project_id}.assumption", "assumption", "Assumption", "active"),
+            (f"{project_id}.problem_statement", "problem_statement", "Problem Statement", "active"),
+            (f"{project_id}.retrospective", "retrospective", "Retrospective", "active"),
+            (f"{project_id}.action_item", "action_item", "Action Item", "active"),
         ]
 
         project = self.upsert_entity(
@@ -3094,7 +3213,15 @@ class DatabaseManager:
             """
         )
         lines = ["# Roadmap", ""]
-        if not phases and not decisions:
+        document = self._memory_area_document("roadmap")
+        self._append_document_section(
+            lines,
+            "Current Roadmap Document",
+            document,
+            "No roadmap document content has been synced yet.",
+        )
+
+        if not phases and not decisions and (document is None or not document.get("body")):
             lines.append("- No roadmap-style entities recorded.")
             lines.append("")
             return "\n".join(lines)

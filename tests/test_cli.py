@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sqlite_mcp_server.cli import _bootstrap_self, _sync_document
-from sqlite_mcp_server.db import DatabaseManager
+from sqlite_mcp_server.db import DatabaseManager, DOCUMENT_TARGETS
 
 
 def test_bootstrap_self_is_idempotent_and_tracks_repo_files(tmp_path: Path) -> None:
@@ -41,6 +41,61 @@ def test_bootstrap_self_is_idempotent_and_tracks_repo_files(tmp_path: Path) -> N
 
         project_state = manager.get_project_state(limit=10)
         assert project_state["counts"]["entities"] >= 8
+    finally:
+        manager.close()
+
+
+def test_sync_document_supports_extended_document_targets(tmp_path: Path) -> None:
+    manager = DatabaseManager(tmp_path / "memory.db")
+    manager.connect()
+    try:
+        manager.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+
+        extra_targets = [
+            "kpi",
+            "okr",
+            "strategy",
+            "risk",
+            "issue",
+            "epic",
+            "story",
+            "feature",
+            "milestone",
+            "release",
+            "dependency",
+            "objective",
+            "initiative",
+            "metric",
+            "capability",
+            "assumption",
+            "problem statement",
+            "retrospective",
+            "action item",
+        ]
+
+        for target in extra_targets:
+            normalized_target = target.replace(" ", "_")
+            input_path = tmp_path / f"{normalized_target}.md"
+            input_path.write_text(f"# {target.title()}\n\nAuto-sync for {target}.\n", encoding="utf-8")
+
+            result = _sync_document(manager, target, input_path)
+            assert result["target"] == normalized_target
+            assert result["content_id"] == DOCUMENT_TARGETS[normalized_target]["content_id"]
+
+            anchor = manager.get_entity(result["entity_id"], include_related=True)
+            assert anchor["attributes"]["source_path"] == str(input_path.resolve())
+            assert any(item["id"] == DOCUMENT_TARGETS[target]["content_id"] for item in anchor["content"])
+
+            # These category targets are meant for sync-document anchors.  
+            # Rendering of custom view names is not supported by default.
+            # We assert the anchor content exists and can be retrieved.
+            content_rows = manager._fetch_all(
+                "SELECT id, body FROM content WHERE entity_id = ? AND id = ?",
+                (result["entity_id"], DOCUMENT_TARGETS[target]["content_id"]),
+            )
+            assert len(content_rows) == 1
+            assert "Auto-sync for" in content_rows[0]["body"]
+
     finally:
         manager.close()
 
@@ -158,5 +213,35 @@ def test_sync_document_updates_memory_area_anchor_and_rendered_view(tmp_path: Pa
         )
         assert "## Current Architecture Document" in rendered["architecture.md"]
         assert "The MCP server centers authoritative state in SQLite." in rendered["architecture.md"]
+    finally:
+        manager.close()
+
+
+def test_sync_document_roadmap_target_is_supported_and_renders(tmp_path: Path) -> None:
+    manager = DatabaseManager(tmp_path / "memory.db")
+    manager.connect()
+    try:
+        manager.bootstrap_project_memory("project.sqlite-mcp", "SQLite MCP")
+
+        input_path = tmp_path / "roadmap.md"
+        input_path.write_text(
+            "# Roadmap Narrative\n\nTrack migration completion and strategic direction.\n",
+            encoding="utf-8",
+        )
+
+        result = _sync_document(manager, "roadmap", input_path)
+
+        assert result["entity_id"] == "project.sqlite-mcp.roadmap"
+        anchor = manager.get_entity("project.sqlite-mcp.roadmap", include_related=True)
+        assert anchor["attributes"]["source_path"] == str(input_path.resolve())
+        assert any(item["id"] == "document.roadmap.current" for item in anchor["content"])
+
+        rendered = manager.render_markdown_views(
+            ["roadmap"],
+            user_requested=True,
+            request_reason="User asked for roadmap view.",
+        )
+        assert "## Current Roadmap Document" in rendered["roadmap.md"]
+        assert "Track migration completion and strategic direction." in rendered["roadmap.md"]
     finally:
         manager.close()

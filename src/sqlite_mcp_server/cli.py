@@ -29,6 +29,12 @@ def _default_backup_path() -> Path:
     return (Path.cwd() / "exports" / "project_memory.snapshot.json").resolve()
 
 
+SYNC_DOCUMENT_TARGET_ALIASES = {
+    "problem statement": "problem_statement",
+    "action item": "action_item",
+}
+
+
 def _connect_db(db_path: Path) -> DatabaseManager:
     manager = DatabaseManager(db_path)
     manager.connect()
@@ -42,6 +48,10 @@ def _print_json(payload: dict[str, Any]) -> None:
 def _slugify_text(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "-", value.strip().lower())
     return normalized.strip("-")[:64] or "item"
+
+
+def _normalize_document_target(target: str) -> str:
+    return target.strip().lower().replace(" ", "_")
 
 
 def _ensure_content(
@@ -103,9 +113,10 @@ def _upsert_content(
 
 
 def _resolve_memory_area(manager: DatabaseManager, target: str) -> dict[str, Any]:
-    if target not in DOCUMENT_TARGETS:
+    normalized_target = _normalize_document_target(target)
+    if normalized_target not in DOCUMENT_TARGETS:
         raise ValidationError(f"unsupported document target: {target!r}")
-    entity_type = DOCUMENT_TARGETS[target]["entity_type"]
+    entity_type = DOCUMENT_TARGETS[normalized_target]["entity_type"]
     entity = manager._fetch_one(
         """
         SELECT DISTINCT e.id, e.type, e.name, e.status
@@ -131,8 +142,11 @@ def _sync_document(manager: DatabaseManager, target: str, input_path: Path) -> d
     if not body:
         raise ValidationError(f"input document {str(resolved_path)!r} is empty")
 
-    config = DOCUMENT_TARGETS[target]
-    entity = _resolve_memory_area(manager, target)
+    normalized_target = _normalize_document_target(target)
+    if normalized_target not in DOCUMENT_TARGETS:
+        raise ValidationError(f"unsupported document target: {target!r}")
+    config = DOCUMENT_TARGETS[normalized_target]
+    entity = _resolve_memory_area(manager, normalized_target)
     _upsert_content(
         manager,
         entity["id"],
@@ -149,7 +163,7 @@ def _sync_document(manager: DatabaseManager, target: str, input_path: Path) -> d
         },
     )
     return {
-        "target": target,
+        "target": normalized_target,
         "entity_id": entity["id"],
         "input_path": str(resolved_path),
         "content_id": config["content_id"],
@@ -319,7 +333,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "sync-document",
         help="Synchronize a hand-maintained markdown document into a project memory area anchor.",
     )
-    sync_document.add_argument("target", choices=sorted(DOCUMENT_TARGETS.keys()))
+    sync_document.add_argument(
+        "target",
+        choices=sorted(set(DOCUMENT_TARGETS.keys()) | set(SYNC_DOCUMENT_TARGET_ALIASES.keys())),
+    )
     sync_document.add_argument("--input-path", type=Path, required=True)
 
     return parser
