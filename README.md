@@ -98,9 +98,71 @@ python -m venv .venv
 python -m pip install -e .
 ```
 
+# Option 2: install script (powershell, cross-platform with pwsh)
+
+```powershell
+.\install.ps1
+# optionally with migration and project local config:
+.\install.ps1 -MigrateExisting -UseProjectConfig
+# CI mode
+.\install.ps1 -CiMode
+```
+
+# Option 3: install script (bash/macOS/Linux)
+
+```bash
+chmod +x ./install.sh
+./install.sh
+# optionally:
+./install.sh --migrate-existing --use-project-config
+./install.sh --ci
+```
+
 # Global MCP config (preferred)
-The install script now registers the MCP server entry in the global user-level old `mcp.json` only:
+The install script now registers the MCP server entry in the global user-level `mcp.json` only:
 `%APPDATA%\Code - Insiders\User\mcp.json`. This avoids duplicate project-local entries.
+
+By default, existing `data`/`exports` in the repo tree are preserved and not auto-migrated. Use:
+
+```powershell
+.\install.ps1 -MigrateExisting
+```
+
+to move existing `.venv`, `data`, and `exports` into self-contained `Project Memory` subfolders (`pm_data`, `pm_exports`, `.venv`).
+
+For editor-agnostic setup (non-Insiders and other environments), configure local project MCP metadata rather than global appdata:
+
+```powershell
+.\install.ps1 -UseProjectConfig
+```
+
+If you explicitly want host-level VS Code/global path behavior, use:
+
+```powershell
+.\install.ps1 -UseGlobalConfig
+```
+To do an unattended CI-style install:
+
+```powershell
+.\install.ps1 -CiMode
+```
+
+To only fetch without applying updates:
+
+```powershell
+.\install.ps1 -FetchOnly
+```
+
+To check out a specific branch before pull:
+
+```powershell
+.\install.ps1 -Branch feature/something
+```
+Or provide an explicit config path:
+
+```powershell
+.\install.ps1 -McpConfigPath "D:\custom\mcp.json"
+```
 
 Then launch the server once:
 

@@ -5,20 +5,71 @@ Usage (from repo root):
   .\install.ps1
 #>
 
+param(
+    [switch]$MigrateExisting,
+    [switch]$UseProjectConfig,
+    [switch]$UseGlobalConfig,
+    [string]$McpConfigPath,
+    [switch]$CiMode,
+    [switch]$FetchOnly,
+    [string]$Branch,
+    [switch]$NonInteractive
+)
+
+if ($NonInteractive) {
+    $ConfirmPreference = 'None'
+}
+
+if ($CiMode) {
+    $UseProjectConfig = $true
+    $NonInteractive = $true
+    $ConfirmPreference = 'None'
+}
+
 $ErrorActionPreference = 'Stop'
 Write-Host "=== SQLite MCP install script started ==="
 
 # Ensure we are in repo root (containing pyproject.toml)
-$scriptPath = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
-Set-Location $scriptPath
+$repoRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+Set-Location $repoRoot
 
 if (-Not (Test-Path pyproject.toml)) {
     Write-Error "pyproject.toml not found. Run this script from project root."
     exit 1
 }
 
-# Git initialize / refresh from remote if available
-if (-Not (Test-Path .git)) {
+# Create a self-contained project memory folder
+$projectMemoryFolder = Join-Path $repoRoot 'Project Memory'
+if (-Not (Test-Path $projectMemoryFolder)) {
+    Write-Host "Creating self-contained folder: $projectMemoryFolder"
+    New-Item -ItemType Directory -Path $projectMemoryFolder | Out-Null
+}
+
+# Optionally migrate existing project artifacts into Project Memory folder
+$moveMappings = @(
+    @{ Source = Join-Path $repoRoot '.venv'; Destination = Join-Path $projectMemoryFolder '.venv'; Label = '.venv' },
+    @{ Source = Join-Path $repoRoot 'data'; Destination = Join-Path $projectMemoryFolder 'pm_data'; Label = 'data' },
+    @{ Source = Join-Path $repoRoot 'exports'; Destination = Join-Path $projectMemoryFolder 'pm_exports'; Label = 'exports' }
+)
+foreach ($mapping in $moveMappings) {
+    if (-Not (Test-Path $mapping.Source)) { continue }
+    if (Test-Path $mapping.Destination) {
+        Write-Host "Destination already exists for $($mapping.Label), leaving both in place:"
+        Write-Host "  source: $($mapping.Source)"
+        Write-Host "  destination: $($mapping.Destination)"
+        continue
+    }
+
+    if ($MigrateExisting) {
+        Write-Host "Migrating existing $($mapping.Label) from $($mapping.Source) to $($mapping.Destination)"
+        Move-Item -Path $mapping.Source -Destination $mapping.Destination -Force
+    } else {
+        Write-Host "Found existing '$($mapping.Label)' at $($mapping.Source). To move it into Project Memory, rerun with -MigrateExisting."
+    }
+}
+
+# Git initialize / refresh from remote if available (still in repo root)
+if (-Not (Test-Path "$repoRoot\.git")) {
     Write-Host "Initializing git repository..."
     git init
 } else {
@@ -28,6 +79,8 @@ if (-Not (Test-Path .git)) {
 # Ensure repository has remote and pull latest content from GitHub
 $remote = 'origin'
 $defaultBranch = 'main'
+if ($Branch) { $defaultBranch = $Branch }
+
 try {
     $currentRemote = git remote get-url $remote 2>$null
 } catch {
@@ -38,14 +91,31 @@ if (-Not $currentRemote) {
     Write-Host "No 'origin' remote found. If you want upstream updates from GitHub, run: git remote add origin <repo-url>"
 } else {
     Write-Host "Found origin remote: $currentRemote"
-    # Auto-detect default branch
-    try {
-        $headRef = git remote show $remote | Select-String 'HEAD branch' | ForEach-Object { ($_ -split ':')[1].Trim() }
-        if ($headRef) { $defaultBranch = $headRef }
-    } catch {}
+    # Auto-detect default branch unless explicitly set
+    if (-Not $Branch) {
+        try {
+            $headRef = git remote show $remote | Select-String 'HEAD branch' | ForEach-Object { ($_ -split ':')[1].Trim() }
+            if ($headRef) { $defaultBranch = $headRef }
+        } catch {}
+    }
 
     Write-Host "Fetching latest from $remote/$defaultBranch..."
     git fetch $remote --depth=1
+
+    if ($Branch) {
+        Write-Host "Checking out branch $Branch..."
+        try {
+            git checkout $Branch
+        } catch {
+            Write-Host "Branch $Branch not found locally; trying to track origin/$Branch..."
+            git checkout -b $Branch $remote/$Branch
+        }
+    }
+
+    if ($FetchOnly) {
+        Write-Host "Fetch only requested, exiting now.";
+        return
+    }
 
     try {
         Write-Host "Pulling latest changes..."
@@ -55,16 +125,17 @@ if (-Not $currentRemote) {
     }
 }
 
-# Create virtual environment
-if (-Not (Test-Path .venv)) {
-    Write-Host "Creating Python virtual environment in .venv..."
-    python -m venv .venv
+# Create virtual environment in Project Memory path if not exists
+$venvPath = Join-Path $projectMemoryFolder '.venv'
+if (-Not (Test-Path $venvPath)) {
+    Write-Host "Creating Python virtual environment in $venvPath..."
+    python -m venv $venvPath
 } else {
-    Write-Host ".venv already exists, skipping creation."
+    Write-Host ".venv already exists at $venvPath, skipping creation."
 }
 
-# Activate
-$activateScript = Join-Path $PWD '.venv\Scripts\Activate.ps1'
+# Activate virtual environment
+$activateScript = Join-Path $venvPath 'Scripts\Activate.ps1'
 if (-Not (Test-Path $activateScript)) {
     Write-Error "Activation script not found at $activateScript"
     exit 1
@@ -74,11 +145,13 @@ Write-Host "Activating virtual environment..."
 . $activateScript
 
 Write-Host "Installing dependencies..."
-python -m pip install --upgrade pip
-python -m pip install -e .
+Set-Location $repoRoot
+$venvPython = Join-Path $venvPath 'Scripts\python.exe'
+& $venvPython -m pip install --upgrade pip
+& $venvPython -m pip install -e $repoRoot
 
 Write-Host "Bootstrapping project memory..."
-sqlite-project-memory-admin bootstrap-self --repo-root .
+sqlite-project-memory-admin bootstrap-self --repo-root $repoRoot
 
 Write-Host "Checking for running sqlite_mcp_server processes..."
 $runningMcp = Get-CimInstance Win32_Process | Where-Object {
@@ -109,10 +182,53 @@ if ($null -eq $sqliteProjectMemoryAdmin) {
 
 sqlite-project-memory-admin health
 
-# Add or update MCP user config entry in mcp.json (Code Insiders)
-$mcpConfigPath = Join-Path $env:APPDATA 'Code - Insiders\User\mcp.json'
+# Determine MCP config path in a friendly way
+function Get-McpConfigPath {
+    param(
+        [switch]$useProject,
+        [switch]$useGlobal,
+        [string]$explicitPath
+    )
+
+    if ($explicitPath) {
+        return (Resolve-Path -Path $explicitPath).Path
+    }
+
+    if ($useProject) {
+        $projectVscode = Join-Path $repoRoot '.vscode'
+        if (-Not (Test-Path $projectVscode)) { New-Item -ItemType Directory -Path $projectVscode | Out-Null }
+        return Join-Path $projectVscode 'mcp.json'
+    }
+
+    if ($useGlobal) {
+        $candidates = @(
+            Join-Path $env:APPDATA 'Code - Insiders\User\mcp.json',
+            Join-Path $env:APPDATA 'Code\User\mcp.json'
+        )
+        foreach ($candidate in $candidates) {
+            $folder = Split-Path $candidate -Parent
+            if (Test-Path $folder) { return $candidate }
+        }
+        # fallback to stable path if none exist
+        return Join-Path $env:APPDATA 'Code\User\mcp.json'
+    }
+
+    # default to project config
+    $projectVscode = Join-Path $repoRoot '.vscode'
+    if (-Not (Test-Path $projectVscode)) { New-Item -ItemType Directory -Path $projectVscode | Out-Null }
+    return Join-Path $projectVscode 'mcp.json'
+}
+
+if ($UseProjectConfig -and $UseGlobalConfig) {
+    Write-Error "Cannot use both -UseProjectConfig and -UseGlobalConfig. Choose one."
+    exit 1
+}
+
+$projectConfigMode = $UseProjectConfig -or (-Not $UseGlobalConfig)
+$mcpConfigPath = Get-McpConfigPath -useProject:$projectConfigMode -useGlobal:$UseGlobalConfig -explicitPath:$McpConfigPath
+Write-Host "Using mcp.json config at: $mcpConfigPath"
 if (-Not (Test-Path $mcpConfigPath)) {
-    Write-Host "mcp.json not found at $mcpConfigPath; creating new file."
+    Write-Host "Creating new mcp.json at $mcpConfigPath"
     $mcp = [pscustomobject]@{ servers = @{}; inputs = @(); } | ConvertTo-Json -Depth 10 | ConvertFrom-Json
 } else {
     $mcp = Get-Content -Path $mcpConfigPath -Raw | ConvertFrom-Json
@@ -122,10 +238,14 @@ if (-Not (Test-Path $mcpConfigPath)) {
     if (-Not $mcp.servers) { $mcp.servers = @{} }
 }
 
-$projectRoot = Get-Location
+$projectRoot = $projectMemoryFolder
 $venvPython = Join-Path $projectRoot '.venv\Scripts\python.exe'
-$dbPath = Join-Path $projectRoot 'data\project_memory.db'
-$exportDir = Join-Path $projectRoot 'exports'
+$dbPath = Join-Path $projectRoot 'pm_data\project_memory.db'
+$exportDir = Join-Path $projectRoot 'pm_exports'
+
+# Ensure consistent substructure in Project Memory folder
+if (-Not (Test-Path (Split-Path $dbPath))) { New-Item -ItemType Directory -Path (Split-Path $dbPath) -Force | Out-Null }
+if (-Not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force | Out-Null }
 
 # Configure machine-global MCP host config only. Per-project workspace config is intentionally skipped.
 # This avoids duplicate settings and centralizes the registered under Code Insiders user scope.
@@ -155,5 +275,16 @@ if ($mcp.servers -is [System.Collections.Hashtable]) {
 $mcp | ConvertTo-Json -Depth 10 | Set-Content -Path $mcpConfigPath -Encoding UTF8
 
 Write-Host "Updated MCP config at $mcpConfigPath"
+
+# Execute optional post-install hook script if present
+$postInstallHook = Join-Path $repoRoot '.scripts\post_install.ps1'
+if (Test-Path $postInstallHook) {
+    Write-Host "Running post-install hook: $postInstallHook"
+    try {
+        & $postInstallHook -CI:$CiMode -NonInteractive:$NonInteractive
+    } catch {
+        Write-Warning "Post-install hook failed: $_"
+    }
+}
 
 Write-Host "All done! To run server: python -m sqlite_mcp_server"

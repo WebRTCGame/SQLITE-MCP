@@ -11,6 +11,38 @@ This guide assumes:
 
 If you re-run `install.ps1`, it now syncs your working tree from `origin` first (auto `git fetch` and `git pull --ff-only`), so local code reflects the latest GitHub changes. Existing database state at `data/project_memory.db` is preserved.
 
+If the target repository already has `./data` or `./exports`, they are not moved by default. To migrate existing project artifacts into the self-contained `Project Memory` folder (to `pm_data` and `pm_exports`), run:
+
+```powershell
+.\install.ps1 -MigrateExisting
+```
+
+To keep the config local in `.vscode/mcp.json` (works for non-Insiders editors and other tools such as Claude Code), run:
+
+```powershell
+.\install.ps1 -UseProjectConfig
+```
+
+To explicitly use global Code/Insiders MCP config:
+
+```powershell
+.\install.ps1 -UseGlobalConfig
+```
+
+To specify an explicit path in any environment:
+
+```powershell
+.\install.ps1 -McpConfigPath "D:\custom\mcp.json"
+```
+
+### Advanced automation modes
+
+- `-CiMode`: non-interactive CI-friendly mode (forces project config + no confirmation)
+- `-FetchOnly`: run only git fetch and exit
+- `-Branch <name>`: checkout and merge this branch
+- `-NonInteractive`: suppress any prompt behaviour
+- `post_install` hook: place `.scripts\post_install.ps1` in repo for custom post steps
+
 ## 1. Clone or initialize project
 
 ```powershell
@@ -107,3 +139,15 @@ When done, deactivate:
 ```powershell
 deactivate
 ```
+
+## 11. Bash/macOS/Linux install
+
+1. Make script executable `chmod +x ./install.sh`
+2. Run `./install.sh`
+3. Options:
+   - `--migrate-existing` (move edges into Project Memory)
+   - `--use-global-config` (use $HOME/.config Code config instead of `.vscode/mcp.json`)
+   - `--mcp-config-path <path>` (explicit config file path)
+   - `--fetch-only` (only git fetch)
+   - `--branch <name>`
+   - `--ci` (non-interactive)
