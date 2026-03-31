@@ -160,12 +160,34 @@ if (-Not $currentRemote) {
 
 # Create virtual environment in Project Memory path if not exists
 $venvPath = Join-Path $projectMemoryFolder '.venv'
+function New-VenvWithTimeout {
+    param(
+        [string]$Target,
+        [int]$TimeoutSec = 300
+    )
+
+    $job = Start-Job -ScriptBlock {
+        param($t)
+        python -m venv $t
+    } -ArgumentList $Target
+
+    if (-not (Wait-Job $job -Timeout $TimeoutSec)) {
+        Stop-Job $job -Force | Out-Null
+        Remove-Job $job | Out-Null
+        throw "venv creation timed out after $TimeoutSec seconds"
+    }
+
+    $result = Receive-Job $job -ErrorAction SilentlyContinue
+    Remove-Job $job | Out-Null
+    return $result
+}
+
 if (-Not (Test-Path $venvPath)) {
     Write-Host "Creating Python virtual environment in $venvPath..."
     try {
-        python -m venv $venvPath
+        New-VenvWithTimeout -Target $venvPath -TimeoutSec 300
     } catch {
-        Write-Warning "Python venv creation failed, trying with --without-pip fallback. Error: $_"
+        Write-Warning "Python venv creation failed or timed out, trying with --without-pip fallback. Error: $_"
         python -m venv $venvPath --without-pip
         $fallbackPython = Join-Path $venvPath 'Scripts\python.exe'
         Write-Host "Bootstrapping pip in fallback venv..."
