@@ -55,7 +55,7 @@ git init
 Or if cloning an existing repo:
 
 ```powershell
-git clone https://github.com/YOUR_ORG/SQLITE-MCP.git .
+git clone https://github.com/WebRTCGame/SQLITE-MCP.git .
 ```
 
 ## 2. Open folder in VS Code Insiders
