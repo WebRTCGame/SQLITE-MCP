@@ -17,12 +17,42 @@ if (-Not (Test-Path pyproject.toml)) {
     exit 1
 }
 
-# Git initialize if needed
+# Git initialize / refresh from remote if available
 if (-Not (Test-Path .git)) {
     Write-Host "Initializing git repository..."
     git init
 } else {
     Write-Host "Git repository already initialized."
+}
+
+# Ensure repository has remote and pull latest content from GitHub
+$remote = 'origin'
+$defaultBranch = 'main'
+try {
+    $currentRemote = git remote get-url $remote 2>$null
+} catch {
+    $currentRemote = $null
+}
+
+if (-Not $currentRemote) {
+    Write-Host "No 'origin' remote found. If you want upstream updates from GitHub, run: git remote add origin <repo-url>"
+} else {
+    Write-Host "Found origin remote: $currentRemote"
+    # Auto-detect default branch
+    try {
+        $headRef = git remote show $remote | Select-String 'HEAD branch' | ForEach-Object { ($_ -split ':')[1].Trim() }
+        if ($headRef) { $defaultBranch = $headRef }
+    } catch {}
+
+    Write-Host "Fetching latest from $remote/$defaultBranch..."
+    git fetch $remote --depth=1
+
+    try {
+        Write-Host "Pulling latest changes..."
+        git pull --ff-only $remote $defaultBranch
+    } catch {
+        Write-Warning "git pull failed (non-fast-forward or local changes). You may need to resolve manually."
+    }
 }
 
 # Create virtual environment
