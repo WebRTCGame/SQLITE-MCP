@@ -24,6 +24,7 @@ while [[ $# -gt 0 ]]; do
     --ci) CI=true; shift ;; 
     --log-file) LOG_FILE="$2"; shift 2 ;; 
     --project-root) PROJECT_ROOT="$2"; shift 2 ;; 
+    --project-memory-root) PROJECT_MEMORY_ROOT="$2"; shift 2 ;; 
     *) echo "Unknown option: $1"; exit 1 ;; 
   esac
 done
@@ -35,7 +36,18 @@ if [ -n "$PROJECT_ROOT" ]; then
 else
   repo_root="$(pwd)"
 fi
-project_memory="$repo_root/Project Memory"
+
+if [ -n "$PROJECT_MEMORY_ROOT" ]; then
+  if [[ "$PROJECT_MEMORY_ROOT" = /* || "$PROJECT_MEMORY_ROOT" = ~* ]]; then
+    project_memory="$PROJECT_MEMORY_ROOT"
+  else
+    project_memory="$repo_root/$PROJECT_MEMORY_ROOT"
+  fi
+elif [ -n "$SQLITE_MCP_PROJECT_MEMORY_ROOT" ]; then
+  project_memory="$SQLITE_MCP_PROJECT_MEMORY_ROOT"
+else
+  project_memory="$repo_root/Project Memory"
+fi
 installation_marker="$project_memory/.install-complete"
 
 printf 'Using project root: %s\n' "$repo_root"

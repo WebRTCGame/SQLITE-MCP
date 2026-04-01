@@ -1,3 +1,11 @@
+# SQLite MCP source file
+#
+# Description:
+#   CLI command line handler for SQLite MCP server control.
+#   Bootstraps/implements functionality for the SQLite MCP project.
+#
+# Date modified: 2026-04-01
+#
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,11 @@
+# SQLite MCP source file
+#
+# Description:
+#   Database access layer for SQLite MCP.
+#   Bootstraps/implements functionality for the SQLite MCP project.
+#
+# Date modified: 2026-04-01
+#
 from __future__ import annotations
 
 import json

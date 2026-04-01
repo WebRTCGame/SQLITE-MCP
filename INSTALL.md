@@ -65,7 +65,7 @@ git clone https://github.com/WebRTCGame/SQLITE-MCP.git .
 ### Windows (PowerShell)
 ```powershell
 .\install.ps1 -ProjectRoot . -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
-.\Project Memory\.venv\Scripts\Activate.ps1
+& ".\Project Memory\.venv\Scripts\Activate.ps1"
 sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" project-state
 sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" health
 ```

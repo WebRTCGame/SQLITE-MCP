@@ -1,3 +1,11 @@
+# SQLite MCP source file
+#
+# Description:
+#   Smoke test script for SQLite MCP workflow validation.
+#   Bootstraps/implements functionality for the SQLite MCP project.
+#
+# Date modified: 2026-04-01
+#
 from pathlib import Path
 from sqlite_mcp_server.cli import _sync_document
 from sqlite_mcp_server.db import DatabaseManager

@@ -147,8 +147,9 @@ Environment variables:
    ```
 3. Activate runtime venv:
    ```powershell
-   .\Project Memory\.venv\Scripts\Activate.ps1
+   & ".\Project Memory\.venv\Scripts\Activate.ps1"
    ```
+   (or use absolute path)
 4. Run self-check:
    ```powershell
    sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" project-state

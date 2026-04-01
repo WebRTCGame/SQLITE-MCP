@@ -1,3 +1,11 @@
+# SQLite MCP source file
+#
+# Description:
+#   Integration test module for SQLite MCP MCP transport and CLI.
+#   Bootstraps/implements functionality for the SQLite MCP project.
+#
+# Date modified: 2026-04-01
+#
 from __future__ import annotations
 
 import io

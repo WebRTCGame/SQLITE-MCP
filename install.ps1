@@ -5,6 +5,20 @@ Usage (from repo root):
   .\install.ps1
 #>
 
+# install.ps1
+# SQLite MCP installer script
+#
+# Description:
+#   Bootstraps the SQLite MCP project by preparing project directories, repository state,
+#   Python virtual environment, dependency installation, and MCP host config.
+#   Supports migration of existing artifacts, optional non-interactive/CI mode, and
+#   automatic `.vscode/mcp.json` setup for the sqlite-project-memory server.
+#
+# Usage (from repo root):
+#   .\install.ps1
+#
+# Date modified: 2026-04-01
+#
 param(
     [switch]$MigrateExisting,
     [switch]$UseProjectConfig,
@@ -15,7 +29,8 @@ param(
     [string]$Branch,
     [switch]$NonInteractive,
     [string]$LogFile,
-    [string]$ProjectRoot
+    [string]$ProjectRoot,
+    [string]$ProjectMemoryRoot
 )
 
 if ($NonInteractive) {
@@ -68,8 +83,19 @@ if (-Not (Test-Path (Join-Path $sourceRoot 'pyproject.toml'))) {
     }
 }
 
-# Create a self-contained project memory folder
-$projectMemoryFolder = Join-Path $projectRoot 'Project Memory'
+# Create a self-contained project memory folder (configurable via parameter or env var)
+if ($ProjectMemoryRoot) {
+    if ([System.IO.Path]::IsPathRooted($ProjectMemoryRoot)) {
+        $projectMemoryFolder = (Resolve-Path -Path $ProjectMemoryRoot).Path
+    } else {
+        $projectMemoryFolder = (Resolve-Path -Path (Join-Path $projectRoot $ProjectMemoryRoot)).Path
+    }
+} elseif ($env:SQLITE_MCP_PROJECT_MEMORY_ROOT) {
+    $projectMemoryFolder = (Resolve-Path -Path $env:SQLITE_MCP_PROJECT_MEMORY_ROOT).Path
+} else {
+    $projectMemoryFolder = Join-Path $projectRoot 'Project Memory'
+}
+
 if (-Not (Test-Path $projectMemoryFolder)) {
     Write-Host "Creating self-contained folder: $projectMemoryFolder"
     New-Item -ItemType Directory -Path $projectMemoryFolder | Out-Null
