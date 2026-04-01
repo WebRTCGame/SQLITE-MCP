@@ -70,6 +70,62 @@ Write-Host "Using project root: $projectRoot"
 $projectRootOriginal = $projectRoot
 Set-Location $projectRoot
 
+function Flatten-NestedCheckout {
+    param(
+        [string]$ScriptRoot,
+        [string]$ProjectRoot,
+        [string]$ProjectMemoryFolder,
+        [string]$InstallScriptPath
+    )
+
+    if ($ScriptRoot -eq $ProjectRoot) { return }
+
+    if (-Not (Test-Path (Join-Path $ScriptRoot 'pyproject.toml'))) {
+        Write-Host "No nested checkout pyproject.toml found in $ScriptRoot. Skipping flattening."
+        return
+    }
+
+    Write-Host "Flattening nested repository content from $ScriptRoot to $ProjectRoot"
+    foreach ($item in Get-ChildItem -Path $ScriptRoot -Force) {
+        $src = $item.FullName
+
+        # Skip current ps script while running
+        if ($InstallScriptPath -and (Resolve-Path -Path $InstallScriptPath -ErrorAction SilentlyContinue).Path -eq $src) {
+            Write-Host "Skipping running install script file from move: $src"
+            continue
+        }
+
+        # Skip relocation of the project memory folder itself
+        if ($ProjectMemoryFolder -and (Resolve-Path -Path $src -ErrorAction SilentlyContinue).Path -eq (Resolve-Path -Path $ProjectMemoryFolder -ErrorAction SilentlyContinue).Path) {
+            continue
+        }
+
+        $dst = Join-Path $ProjectRoot $item.Name
+        if (Test-Path $dst) {
+            Write-Host "Destination already exists, not overwriting: $dst"
+            continue
+        }
+
+        try {
+            Move-Item -Path $src -Destination $dst -Force
+            Write-Host "Moved $src -> $dst"
+        } catch {
+            Write-Warning ("Unable to move {0} -> {1}: {2}" -f $src, $dst, $_)
+        }
+    }
+
+    # Remove empty original folder if appropriate
+    if (-Not (Get-ChildItem -Path $ScriptRoot -Force | Where-Object { $_.Name -notin '.','..' })) {
+        try {
+            Remove-Item -Path $ScriptRoot -Force
+            Write-Host "Removed empty nested checkout folder $ScriptRoot"
+        } catch {
+            Write-Warning ("Could not remove folder {0}: {1}" -f $ScriptRoot, $_)
+        }
+    }
+}
+
+
 if (-Not (Test-Path (Join-Path $projectRoot 'pyproject.toml'))) {
     Write-Warning "pyproject.toml not found in $projectRoot. Proceeding anyway (assumed external host project)."
 }
@@ -99,6 +155,13 @@ if ($ProjectMemoryRoot) {
 if (-Not (Test-Path $projectMemoryFolder)) {
     Write-Host "Creating self-contained folder: $projectMemoryFolder"
     New-Item -ItemType Directory -Path $projectMemoryFolder | Out-Null
+}
+
+# If the repository was initially checked out in a nested path, move repo contents to project root.
+if ($scriptRoot -ne $projectRoot) {
+    Flatten-NestedCheckout -ScriptRoot $scriptRoot -ProjectRoot $projectRoot -ProjectMemoryFolder $projectMemoryFolder -InstallScriptPath $MyInvocation.MyCommand.Path
+    # Keep path references consistent after flatten
+    $scriptRoot = $projectRoot
 }
 
 # Determine install status with marker
@@ -442,44 +505,9 @@ function Ensure-ProjectMemoryLayout {
 
 Ensure-ProjectMemoryLayout -ProjectMemoryRoot $projectMemoryFolder -ProjectRoot $projectRoot
 
-# Cleanup: if we are running from a nested sqlite-mcp checkout, move that folder into Project Memory
-if ($projectRootOriginal -and $scriptRoot -and ($projectRootOriginal -ne $scriptRoot) -and (Test-Path $projectMemoryFolder)) {
-    $repoFolderName = Split-Path -Path $scriptRoot -Leaf
-    $destination = Join-Path $projectMemoryFolder $repoFolderName
-
-    # If installer script is in the same folder, defer move to a short-lived helper process after exit.
-    $scriptInvokePath = $MyInvocation.MyCommand.Path
-    if ($scriptInvokePath -and $scriptInvokePath.StartsWith($scriptRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        Write-Host "Installer is running from $scriptRoot; deferring move to helper script."
-        $moveScript = Join-Path $env:TEMP "move-sqlite-mcp-$([guid]::NewGuid()).ps1"
-        $helper = @"
-Start-Sleep -Seconds 3
-`$src = '$scriptRoot'
-`$dst = '$destination'
-for (`$attempt=1; `$attempt -le 30; `$attempt++) {
-    try {
-        if (-Not (Test-Path `$dst)) {
-            Move-Item -Path `$src -Destination `$dst -Force
-            break
-        }
-        break
-    } catch {
-        Start-Sleep -Seconds 1
-    }
-}
-Remove-Item -Path '$moveScript' -Force -ErrorAction SilentlyContinue
-"@
-        Set-Content -Path $moveScript -Value $helper -Encoding UTF8
-
-        Start-Process -FilePath "powershell" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$moveScript" -WindowStyle Hidden
-        Write-Host "Launched deferred mover script at $moveScript"
-    } elseif (-Not (Test-Path $destination)) {
-        Write-Host "Moving installer folder from $scriptRoot into Project Memory at $destination"
-        Move-Item -Path $scriptRoot -Destination $destination
-        Write-Host "Moved installer folder into Project Memory."
-    } else {
-        Write-Host "Destination $destination already exists; skipping move."
-    }
+# Cleanup: nested checkout is handled by the flatten step earlier, and repo content should now be in project root.
+if ($projectRootOriginal -and $scriptRoot -and ($projectRootOriginal -ne $scriptRoot)) {
+    Write-Host "Cleanup: nested checkout behavior was applied (script root: $scriptRoot, project root: $projectRoot)."
 }
 
 Write-Host "All done! To run server: python -m sqlite_mcp_server"

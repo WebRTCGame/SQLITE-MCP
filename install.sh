@@ -50,6 +50,51 @@ else
 fi
 installation_marker="$project_memory/.install-complete"
 
+flatten_nested_checkout() {
+  local script_root="$1"
+  local repo_root="$2"
+  local project_memory="$3"
+
+  if [ "$script_root" = "$repo_root" ]; then
+    return
+  fi
+
+  if [ ! -f "$script_root/pyproject.toml" ]; then
+    echo "No nested checkout pyproject.toml at $script_root; skipping flattening."
+    return
+  fi
+
+  echo "Flattening nested checkout from $script_root to $repo_root"
+
+  shopt -s dotglob nullglob
+  for item in "$script_root"/*; do
+    # Skip project memory folder itself
+    if [ "$item" = "$project_memory" ]; then
+      continue
+    fi
+
+    # Skip installer script being executed
+    if [ "$item" = "${BASH_SOURCE[0]}" ]; then
+      echo "Skipping running install script file in move: $item"
+      continue
+    fi
+
+    dest="$repo_root/$(basename "$item")"
+    if [ -e "$dest" ]; then
+      echo "Destination already exists, not overwriting: $dest"
+      continue
+    fi
+
+    mv "$item" "$dest" || echo "Warning: failed to move $item -> $dest"
+  done
+  shopt -u dotglob nullglob
+
+  # Remove empty nested directory if now empty
+  if [ -z "$(ls -A "$script_root")" ]; then
+    rmdir "$script_root" || true
+  fi
+}
+
 printf 'Using project root: %s\n' "$repo_root"
 
 if [ "$LOG_FILE" ]; then
@@ -72,6 +117,8 @@ if [ ! -f "$source_root/pyproject.toml" ] && [ -f "$script_root/pyproject.toml" 
 fi
 
 mkdir -p "$project_memory"
+
+flatten_nested_checkout "$script_root" "$repo_root" "$project_memory"
 
 map_migration() {
   local src="$1" dst="$2" label="$3"
@@ -257,44 +304,9 @@ ensure_project_memory_layout() {
 
 ensure_project_memory_layout
 
-# Cleanup: if running from a nested sqlite-mcp folder, move it into Project Memory
-script_root="$(dirname "$(readlink -f "$0")")"
-if [ "$repo_root" != "$script_root" ] && [ -d "$project_memory" ]; then
-  repo_folder_name="$(basename "$script_root")"
-  destination="$project_memory/$repo_folder_name"
-
-  # avoid moving an executing script directory directly; defer to helper
-  if lsof +D "$script_root" >/dev/null 2>&1; then
-    echo "Installer is running from $script_root; deferring move to helper script."
-    mover_script="$TEMP/move-sqlite-mcp-$(uuidgen).sh"
-    cat > "$mover_script" <<'EOF'
-#!/usr/bin/env bash
-src="$script_root"
-dst="$destination"
-for i in {1..30}; do
-  if [ ! -d "$dst" ]; then
-    if mv "$src" "$dst"; then
-      break
-    fi
-  else
-    break
-  fi
-  sleep 1
-done
-rm -f "$mover_script"
-EOF
-    chmod +x "$mover_script"
-    nohup bash "$mover_script" >/dev/null 2>&1 &
-    echo "Launched deferred mover script: $mover_script"
-  else
-    if [ ! -d "$destination" ]; then
-      echo "Moving installer folder $script_root into $destination"
-      mv "$script_root" "$destination"
-      echo "Moved installer folder into Project Memory."
-    else
-      echo "Destination $destination already exists; skipping move."
-    fi
-  fi
+# Cleanup: nested checkout is handled by flatten_nested_checkout earlier.
+if [ "$repo_root" != "$script_root" ]; then
+  echo "Cleanup: nested checkout was flattened; project files should now live in $repo_root"
 fi
 
 echo "Install complete. Run: ${project_memory}/.venv/bin/python -m sqlite_mcp_server"
