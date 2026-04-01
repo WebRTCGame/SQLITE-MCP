@@ -23,82 +23,48 @@ SQLite-backed MCP server for storing project memory as a graph-friendly relation
 - Core documents: `architecture`, `decisions`, `plan`, `notes`, `roadmap`
 - Extended docks: `kpi`, `okr`, `strategy`, `risk`, `issue`, `epic`, `story`, `feature`, `milestone`, `release`, `dependency`, `objective`, `initiative`, `metric`, `capability`, `assumption`, `problem_statement`, `retrospective`, `action_item`
 
-## Install (cross-platform)
+## Install
 
-### AI-friendly install from scratch
+Clone the repo into a `sqlite-mcp` subfolder of your project, then run the installer once.
+The script detects its location, places all runtime files inside `Project Memory/`, and writes `.vscode/mcp.json`.
+
+### Windows (PowerShell)
 
 ```powershell
-# from project parent folder
+# from your project root
 git clone https://github.com/WebRTCGame/SQLITE-MCP.git sqlite-mcp
-cd sqlite-mcp
-.\install.ps1 -ProjectRoot ".." -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
-
-# OR on Linux/macOS
-chmod +x ./install.sh
-./install.sh --project-root ".." --migrate-existing --use-project-config --ci --log-file install.log
+.\sqlite-mcp\install.ps1
 ```
 
-> Note: If your host project folder is not the checkout path or does not contain `pyproject.toml`, the install scripts will detect that and use the script checkout as the Python package source for `pip install -e`. The `Project Memory` folder still holds runtime state (`pm_data`, `.venv`, `pm_exports`).
+Optional flag:
+- `-LogFile install.log` — save a full transcript for debugging
 
-### Option A: pip only
+### Linux / macOS
 
-```powershell
+```bash
+# from your project root
+git clone https://github.com/WebRTCGame/SQLITE-MCP.git sqlite-mcp
+chmod +x ./sqlite-mcp/install.sh
+./sqlite-mcp/install.sh
+```
+
+Optional flag:
+- `--log-file install.log` — save a full transcript for debugging
+
+**To update:** re-run the same command. The installer is idempotent — it skips steps already done and upgrades the package in place.
+
+### pip only (developer / advanced)
+
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1  # windows
-# or source .venv/bin/activate  # linux/macos
-python -m pip install -e .
+source .venv/bin/activate   # or .venv\Scripts\Activate.ps1 on Windows
+pip install -e .
 ```
-
-### Option B: PowerShell script (Windows or pwsh)
-
-```powershell
-.\install.ps1
-```
-
-Recommended options:
-- `-MigrateExisting` (move old `.venv`, `data`, `exports` into `Project Memory`)
-- `-ProjectMemoryRoot <path>` (custom Project Memory root; also via env var `SQLITE_MCP_PROJECT_MEMORY_ROOT`)
-- `-UseProjectConfig` (default; writes `.vscode/mcp.json`)
-- `-UseGlobalConfig` (writes to VS Code AppData location)
-- `-McpConfigPath <path>` (explicit config file path)
-- `-CiMode` (non-interactive CI install)
-- `-FetchOnly` (git fetch only)
-- `-Branch <branch>` (checkout branch first)
-- `-LogFile <path>` (transcript logging)
-
-The installer now performs automatic layout verification and correction of the final runtime tree such as:
-- `Project Memory/.venv`
-- `Project Memory/pm_data/project_memory.db`
-- `Project Memory/pm_exports`
-- `Project Memory/.install-complete`
-
-Full example:
-
-```powershell
-.\install.ps1 -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
-```
-
-### Option C: Bash script (Linux/macOS)
-
-```bash
-chmod +x ./install.sh
-./install.sh
-```
-
-Recommended options:
-- `--migrate-existing`
-- `--use-project-config`
-- `--use-global-config`
-- `--mcp-config-path <path>`
-- `--ci`
-- `--fetch-only`
-- `--branch <branch>`
-- `--log-file <path>`
 
 Full example:
 
 ```bash
-./install.sh --migrate-existing --use-project-config --ci --log-file install.log
+./sqlite-mcp/install.sh
 ```
 
 ### Start server
@@ -112,7 +78,7 @@ python -m sqlite_mcp_server
 - `Project Memory/.venv`
 - `Project Memory/pm_data/project_memory.db`
 - `Project Memory/pm_exports`
-- `.vscode/mcp.json` (default local config) or global path
+- `.vscode/mcp.json`
 
 ## CLI tools
 
@@ -147,16 +113,16 @@ Environment variables:
 
 ## Quick start (Windows)
 
-1. Clone the repo.
-2. Run the one-shot installer (from checkout):
+1. Clone the repo into your project.
+2. Run the installer:
    ```powershell
-   .\install.ps1 -ProjectRoot . -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log
+   git clone https://github.com/WebRTCGame/SQLITE-MCP.git sqlite-mcp
+   .\sqlite-mcp\install.ps1
    ```
 3. Activate runtime venv:
    ```powershell
    & ".\Project Memory\.venv\Scripts\Activate.ps1"
    ```
-   (or use absolute path)
 4. Run self-check:
    ```powershell
    sqlite-project-memory-admin --db-path "Project Memory/pm_data/project_memory.db" project-state
@@ -169,11 +135,12 @@ Environment variables:
 
 ## Quick start (Linux/macOS)
 
-1. Clone the repo.
-2. Run the one-shot installer (from checkout):
+1. Clone the repo into your project.
+2. Run the installer:
    ```bash
-   chmod +x ./install.sh
-   ./install.sh --project-root . --migrate-existing --use-project-config --ci --log-file install.log
+   git clone https://github.com/WebRTCGame/SQLITE-MCP.git sqlite-mcp
+   chmod +x ./sqlite-mcp/install.sh
+   ./sqlite-mcp/install.sh
    ```
 3. Activate runtime venv:
    ```bash
