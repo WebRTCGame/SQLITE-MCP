@@ -411,13 +411,12 @@ def set_project_root(project_root: str, ctx: Context | None = None) -> dict[str,
         },
     )
 
+    try:
+        app_ctx.db.apply_performance_tuning()
+    except Exception:
+        pass
+
     return {"project_root": str(root), "db_path": str(db_path), "export_dir": str(export_dir)}
-
-
-def _default_exports_dir(project_root: Path | None = None) -> Path:
-    root = (project_root or Path.cwd()).resolve()
-    configured = os.getenv("SQLITE_MCP_EXPORT_DIR")
-    return _normalize_path_config(configured, root, "exports")
 
 
 @mcp.tool()
@@ -588,6 +587,7 @@ def list_entities(
     tag: str | None = None,
     search: str | None = None,
     limit: int = 50,
+    offset: int = 0,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """List entities with optional type, status, attribute, tag, and text filters."""
@@ -600,6 +600,7 @@ def list_entities(
         tag=tag,
         search=search,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -840,6 +841,7 @@ def apply_performance_tuning(
     )
 
 
+@mcp.tool()
 def get_decision_log(
     limit: int = 25,
     offset: int = 0,
@@ -851,6 +853,7 @@ def get_decision_log(
     return _db(ctx).get_decision_log(limit=limit, offset=offset, compact=compact)
 
 
+@mcp.tool()
 def get_architecture_summary(
     node_limit: int = 100,
     relationship_limit: int = 150,
@@ -866,6 +869,7 @@ def get_architecture_summary(
     )
 
 
+@mcp.tool()
 def get_recent_reasoning(
     limit: int = 20,
     offset: int = 0,
@@ -877,6 +881,7 @@ def get_recent_reasoning(
     return _db(ctx).get_recent_reasoning(limit=limit, offset=offset, compact=compact)
 
 
+@mcp.tool()
 def get_dependency_view(
     root_entity_id: str | None = None,
     max_depth: int = 2,
@@ -896,6 +901,7 @@ def get_dependency_view(
     )
 
 
+@mcp.tool()
 def get_recent_activity(
     limit: int = 20,
     offset: int = 0,

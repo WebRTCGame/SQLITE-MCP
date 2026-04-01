@@ -3,3 +3,11 @@ __pycache__/
 .pytest_cache/
 *.pyc
 data/
+exports/
+*.egg-info/
+tmp.db
+tmp.db-shm
+tmp.db-wal
+tmp_smoke_test.py
+tmp_views/
+Project Memory/

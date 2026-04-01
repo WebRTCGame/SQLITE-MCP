@@ -1,3 +1,0 @@
-[console_scripts]
-sqlite-project-memory-admin = sqlite_mcp_server.cli:main
-sqlite-project-memory-mcp = sqlite_mcp_server.server:main

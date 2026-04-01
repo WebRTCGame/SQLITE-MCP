@@ -934,8 +934,10 @@ class DatabaseManager:
         tag: str | None = None,
         search: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         limit = max(1, min(limit, 200))
+        offset = max(0, offset)
         joins: list[str] = []
         conditions: list[str] = ["1 = 1"]
         parameters: list[Any] = []
@@ -964,15 +966,16 @@ class DatabaseManager:
         if search:
             conditions.append(
                 "(" 
-                "COALESCE(e.name, '') LIKE ? OR "
-                "COALESCE(e.description, '') LIKE ? OR "
-                "EXISTS (SELECT 1 FROM content c WHERE c.entity_id = e.id AND c.body LIKE ?)"
+                "COALESCE(e.name, '') LIKE ? ESCAPE '\\' OR "
+                "COALESCE(e.description, '') LIKE ? ESCAPE '\\' OR "
+                "EXISTS (SELECT 1 FROM content c WHERE c.entity_id = e.id AND c.body LIKE ? ESCAPE '\\')"
                 ")"
             )
-            like = f"%{search.strip()}%"
+            escaped = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
             parameters.extend([like, like, like])
 
-        parameters.append(limit)
+        parameters.extend([limit, offset])
 
         query = f"""
         SELECT DISTINCT e.*
@@ -980,7 +983,7 @@ class DatabaseManager:
         {' '.join(joins)}
         WHERE {' AND '.join(conditions)}
         ORDER BY e.updated_at DESC, e.id ASC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """
         return self._fetch_all(query, tuple(parameters))
 
@@ -1210,9 +1213,7 @@ class DatabaseManager:
         if mode not in {"append", "replace"}:
             raise ValidationError("mode must be 'append' or 'replace'")
 
-        content_type = content_type.strip().lower()
-        if content_type not in {"text", "markdown", "json"}:
-            raise ValidationError("content_type must be one of 'text', 'markdown', 'json'")
+        content_type = _validate_identifier(content_type.strip().lower(), "content type")
 
         normalized_body = (content or "").strip()
         if not normalized_body:
@@ -2581,6 +2582,20 @@ class DatabaseManager:
         if self._connection is None:
             raise RuntimeError("database connection has not been initialized")
 
+        _ALLOWED_JOURNAL_MODES = {"delete", "truncate", "persist", "memory", "wal", "off"}
+        _ALLOWED_SYNCHRONOUS = {"0", "off", "1", "normal", "2", "full", "3", "extra"}
+        _ALLOWED_TEMP_STORE = {"0", "default", "1", "file", "2", "memory"}
+        if journal_mode.lower() not in _ALLOWED_JOURNAL_MODES:
+            raise ValidationError(f"journal_mode must be one of: {', '.join(sorted(_ALLOWED_JOURNAL_MODES))}; got {journal_mode!r}")
+        if str(synchronous).lower() not in _ALLOWED_SYNCHRONOUS:
+            raise ValidationError(f"synchronous must be one of: {', '.join(sorted(_ALLOWED_SYNCHRONOUS))}; got {synchronous!r}")
+        if temp_store.lower() not in _ALLOWED_TEMP_STORE:
+            raise ValidationError(f"temp_store must be one of: {', '.join(sorted(_ALLOWED_TEMP_STORE))}; got {temp_store!r}")
+        if not isinstance(cache_size, int):
+            raise ValidationError("cache_size must be an integer")
+        if not isinstance(mmap_size, int) or mmap_size < 0:
+            raise ValidationError("mmap_size must be a non-negative integer")
+
         pragmas = {
             "journal_mode": journal_mode,
             "synchronous": synchronous,
@@ -2781,21 +2796,13 @@ class DatabaseManager:
         if first_keyword not in allowed_keywords:
             raise ValidationError("only read-only SELECT, WITH, PRAGMA, and EXPLAIN queries are allowed")
 
-        forbidden_tokens = {
-            "insert ",
-            "update ",
-            "delete ",
-            "drop ",
-            "alter ",
-            "create ",
-            "replace ",
-            "attach ",
-            "detach ",
-            "vacuum",
-            "reindex",
-            "pragma writable_schema",
-        }
-        if any(token in lowered for token in forbidden_tokens):
+        import re as _re
+        forbidden_pattern = _re.compile(
+            r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|vacuum|reindex)\b"
+            r"|pragma\s+writable_schema",
+            _re.IGNORECASE,
+        )
+        if forbidden_pattern.search(lowered):
             raise ValidationError("query contains a forbidden token for the read-only SQL tool")
 
         if ";" in normalized_sql.rstrip(";"):
@@ -3119,7 +3126,7 @@ class DatabaseManager:
             FROM entities e
             LEFT JOIN attributes a ON a.entity_id = e.id
             WHERE e.type IN ('task', 'todo', 'bug')
-                            AND COALESCE(e.status, '') != 'archived'
+              AND COALESCE(e.status, 'active') NOT IN ('done', 'archived', 'deprecated')
               AND NOT EXISTS (
                   SELECT 1 FROM relationships mr
                   WHERE mr.to_entity = e.id AND mr.type = 'has_memory_area'

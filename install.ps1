@@ -85,7 +85,7 @@ function Flatten-NestedCheckout {
         return
     }
 
-    Write-Host "Flattening nested repository content from $ScriptRoot to $ProjectRoot"
+    Write-Host "Moving repository source from $ScriptRoot into Project Memory: $ProjectMemoryFolder"
     foreach ($item in Get-ChildItem -Path $ScriptRoot -Force) {
         $src = $item.FullName
 
@@ -100,7 +100,7 @@ function Flatten-NestedCheckout {
             continue
         }
 
-        $dst = Join-Path $ProjectRoot $item.Name
+        $dst = Join-Path $ProjectMemoryFolder $item.Name
         if (Test-Path $dst) {
             Write-Host "Destination already exists, not overwriting: $dst"
             continue
@@ -126,19 +126,6 @@ function Flatten-NestedCheckout {
 }
 
 
-if (-Not (Test-Path (Join-Path $projectRoot 'pyproject.toml'))) {
-    Write-Warning "pyproject.toml not found in $projectRoot. Proceeding anyway (assumed external host project)."
-}
-
-# Source root is the Python project used for pip install; prefer current script checkout when host is external
-$sourceRoot = $projectRoot
-if (-Not (Test-Path (Join-Path $sourceRoot 'pyproject.toml'))) {
-    if (Test-Path (Join-Path $scriptRoot 'pyproject.toml')) {
-        $sourceRoot = $scriptRoot
-        Write-Host "Using script location as source root for pip install: $sourceRoot"
-    }
-}
-
 # Create a self-contained project memory folder (configurable via parameter or env var)
 if ($ProjectMemoryRoot) {
     if ([System.IO.Path]::IsPathRooted($ProjectMemoryRoot)) {
@@ -157,11 +144,27 @@ if (-Not (Test-Path $projectMemoryFolder)) {
     New-Item -ItemType Directory -Path $projectMemoryFolder | Out-Null
 }
 
-# If the repository was initially checked out in a nested path, move repo contents to project root.
-if ($scriptRoot -ne $projectRoot) {
+# Track whether this is a nested install (sqlite-mcp repo lives inside the user's project).
+$isNestedInstall = $scriptRoot -ne $projectRoot
+
+# Move repo contents into Project Memory so nothing from sqlite-mcp pollutes the user's project root.
+if ($isNestedInstall) {
     Flatten-NestedCheckout -ScriptRoot $scriptRoot -ProjectRoot $projectRoot -ProjectMemoryFolder $projectMemoryFolder -InstallScriptPath $MyInvocation.MyCommand.Path
-    # Keep path references consistent after flatten
     $scriptRoot = $projectRoot
+}
+
+# Resolve source root: developer scenario (projectRoot IS the repo), PM folder (nested install), scriptRoot fallback.
+if (Test-Path (Join-Path $projectRoot 'pyproject.toml')) {
+    $sourceRoot = $projectRoot
+} elseif (Test-Path (Join-Path $projectMemoryFolder 'pyproject.toml')) {
+    $sourceRoot = $projectMemoryFolder
+    Write-Host "Using Project Memory folder as source root for pip install: $sourceRoot"
+} elseif (Test-Path (Join-Path $scriptRoot 'pyproject.toml')) {
+    $sourceRoot = $scriptRoot
+    Write-Host "Using script location as source root for pip install: $sourceRoot"
+} else {
+    Write-Warning "pyproject.toml not found; proceeding with project root as source root."
+    $sourceRoot = $projectRoot
 }
 
 # Determine install status with marker
@@ -312,11 +315,17 @@ $venvPython = Join-Path $venvPath 'Scripts\python.exe'
 & $venvPython -m pip install --upgrade pip
 & $venvPython -m pip install -e $sourceRoot
 
+$projectMemoryRoot = $projectMemoryFolder
+$venvPython = Join-Path $projectMemoryRoot '.venv\Scripts\python.exe'
+$dbPath = Join-Path $projectMemoryRoot 'pm_data\project_memory.db'
+$exportDir = Join-Path $projectMemoryRoot 'pm_exports'
+
 Write-Host "Bootstrapping project memory..."
 $env:SQLITE_MCP_DB_PATH = $dbPath
 $env:SQLITE_MCP_EXPORT_DIR = $exportDir
 
-sqlite-project-memory-admin --db-path $dbPath bootstrap-self --repo-root $projectRoot
+Write-Host "Command: sqlite-project-memory-admin --db-path '$dbPath' bootstrap-self --repo-root '$projectRoot'"
+sqlite-project-memory-admin --db-path "$dbPath" bootstrap-self --repo-root "$projectRoot"
 
 Write-Host "Checking for running sqlite_mcp_server processes..."
 $runningMcp = Get-CimInstance Win32_Process | Where-Object {
@@ -344,8 +353,8 @@ if ($null -eq $sqliteProjectMemoryAdmin) {
     exit 1
 }
 
-sqlite-project-memory-admin --db-path $dbPath project-state
-sqlite-project-memory-admin --db-path $dbPath health
+sqlite-project-memory-admin --db-path "$dbPath" project-state
+sqlite-project-memory-admin --db-path "$dbPath" health
 
 # Determine MCP config path in a friendly way
 function Get-McpConfigPath {
@@ -505,9 +514,26 @@ function Ensure-ProjectMemoryLayout {
 
 Ensure-ProjectMemoryLayout -ProjectMemoryRoot $projectMemoryFolder -ProjectRoot $projectRoot
 
-# Cleanup: nested checkout is handled by the flatten step earlier, and repo content should now be in project root.
-if ($projectRootOriginal -and $scriptRoot -and ($projectRootOriginal -ne $scriptRoot)) {
-    Write-Host "Cleanup: nested checkout behavior was applied (script root: $scriptRoot, project root: $projectRoot)."
+# For nested installs: remove any sqlite-mcp source files that leaked into project root.
+# (All source should have moved into Project Memory; this is a safety net only.)
+if ($isNestedInstall) {
+    $leakedArtifacts = @(
+        'src', 'tests', 'pyproject.toml', 'README.md', 'INSTALL.md',
+        'API SUMMARY.md', 'Chart.mmd', 'install.sh', '.gitignore',
+        'tmp_views', 'tmp_smoke_test.py', 'tmp.db', 'tmp.db-shm', 'tmp.db-wal'
+    )
+    foreach ($artifact in $leakedArtifacts) {
+        $path = Join-Path $projectRoot $artifact
+        if (Test-Path $path) {
+            Write-Host "Removing leaked source artifact from project root: $path"
+            try {
+                Remove-Item -Path $path -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Warning "Could not remove $path: $($_.Exception.Message)"
+            }
+        }
+    }
+    Write-Host "Nested install complete. Project Memory contains all sqlite-mcp source and runtime files."
 }
 
 Write-Host "All done! To run server: python -m sqlite_mcp_server"

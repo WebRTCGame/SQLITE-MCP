@@ -64,7 +64,7 @@ flatten_nested_checkout() {
     return
   fi
 
-  echo "Flattening nested checkout from $script_root to $repo_root"
+  echo "Moving repository source from $script_root into Project Memory: $project_memory"
 
   shopt -s dotglob nullglob
   for item in "$script_root"/*; do
@@ -79,7 +79,7 @@ flatten_nested_checkout() {
       continue
     fi
 
-    dest="$repo_root/$(basename "$item")"
+    dest="$project_memory/$(basename "$item")"
     if [ -e "$dest" ]; then
       echo "Destination already exists, not overwriting: $dest"
       continue
@@ -110,15 +110,31 @@ if [ ! -f "$repo_root/pyproject.toml" ]; then
   echo "WARNING: pyproject.toml not found in $repo_root. Proceeding anyway (assumed external host project)."
 fi
 
-source_root="$repo_root"
-if [ ! -f "$source_root/pyproject.toml" ] && [ -f "$script_root/pyproject.toml" ]; then
-  source_root="$script_root"
-  echo "Using script location as source root for pip install: $source_root"
-fi
-
 mkdir -p "$project_memory"
 
+# Track whether this is a nested install (sqlite-mcp repo lives inside the user's project).
+if [ "$script_root" != "$repo_root" ]; then
+  is_nested_install=true
+else
+  is_nested_install=false
+fi
+
+# Move repo contents into Project Memory so nothing from sqlite-mcp pollutes the user's project root.
 flatten_nested_checkout "$script_root" "$repo_root" "$project_memory"
+
+# Resolve source root: developer scenario (repo_root IS the repo), PM folder (nested install), fallback.
+if [ -f "$repo_root/pyproject.toml" ]; then
+  source_root="$repo_root"
+elif [ -f "$project_memory/pyproject.toml" ]; then
+  source_root="$project_memory"
+  echo "Using Project Memory folder as source root for pip install: $source_root"
+elif [ -f "$script_root/pyproject.toml" ]; then
+  source_root="$script_root"
+  echo "Using script location as source root for pip install: $source_root"
+else
+  echo "WARNING: pyproject.toml not found. Proceeding with repo_root as source root."
+  source_root="$repo_root"
+fi
 
 map_migration() {
   local src="$1" dst="$2" label="$3"
@@ -304,9 +320,22 @@ ensure_project_memory_layout() {
 
 ensure_project_memory_layout
 
+# For nested installs: remove any sqlite-mcp source files that leaked into project root.
+# (All source should have moved into Project Memory; this is a safety net only.)
+if [ "$is_nested_install" = true ]; then
+  for artifact in src tests pyproject.toml README.md INSTALL.md 'API SUMMARY.md' Chart.mmd install.ps1 .gitignore tmp_views tmp_smoke_test.py tmp.db tmp.db-shm tmp.db-wal; do
+    path="$repo_root/$artifact"
+    if [ -e "$path" ]; then
+      echo "Removing leaked source artifact from project root: $path"
+      rm -rf "$path" || echo "Warning: failed to remove $path"
+    fi
+  done
+  echo "Nested install complete. Project Memory contains all sqlite-mcp source and runtime files."
+fi
+
 # Cleanup: nested checkout is handled by flatten_nested_checkout earlier.
 if [ "$repo_root" != "$script_root" ]; then
-  echo "Cleanup: nested checkout was flattened; project files should now live in $repo_root"
+  echo "Cleanup: source moved from $script_root into Project Memory: $project_memory"
 fi
 
 echo "Install complete. Run: ${project_memory}/.venv/bin/python -m sqlite_mcp_server"
