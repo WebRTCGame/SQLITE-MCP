@@ -62,6 +62,12 @@ git clone https://github.com/WebRTCGame/SQLITE-MCP.git .
 
 ## 2. One-shot install and self-check
 
+The installer now performs automatic layout verification and correction of the final runtime tree, including:
+- `.venv` at `Project Memory/.venv`
+- `project_memory.db` at `Project Memory/pm_data/project_memory.db`
+- export directory at `Project Memory/pm_exports`
+- marker at `Project Memory/.install-complete`
+
 ### Windows (PowerShell)
 ```powershell
 .\install.ps1 -ProjectRoot . -MigrateExisting -UseProjectConfig -CiMode -LogFile install.log

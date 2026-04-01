@@ -57,6 +57,7 @@ python -m pip install -e .
 
 Recommended options:
 - `-MigrateExisting` (move old `.venv`, `data`, `exports` into `Project Memory`)
+- `-ProjectMemoryRoot <path>` (custom Project Memory root; also via env var `SQLITE_MCP_PROJECT_MEMORY_ROOT`)
 - `-UseProjectConfig` (default; writes `.vscode/mcp.json`)
 - `-UseGlobalConfig` (writes to VS Code AppData location)
 - `-McpConfigPath <path>` (explicit config file path)
@@ -64,6 +65,12 @@ Recommended options:
 - `-FetchOnly` (git fetch only)
 - `-Branch <branch>` (checkout branch first)
 - `-LogFile <path>` (transcript logging)
+
+The installer now performs automatic layout verification and correction of the final runtime tree such as:
+- `Project Memory/.venv`
+- `Project Memory/pm_data/project_memory.db`
+- `Project Memory/pm_exports`
+- `Project Memory/.install-complete`
 
 Full example:
 

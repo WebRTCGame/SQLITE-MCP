@@ -225,6 +225,38 @@ if [ ! -f "$installation_marker" ]; then
   echo "Created install marker: $installation_marker"
 fi
 
+ensure_project_memory_layout() {
+  local root="$repo_root"
+  local pm="$project_memory"
+
+  mkdir -p "$pm"
+  for item in .venv data exports; do
+    local src="$root/$item"
+    local dst=""
+    case "$item" in
+      .venv) dst="$pm/.venv" ;;
+      data) dst="$pm/pm_data" ;;
+      exports) dst="$pm/pm_exports" ;;
+    esac
+    if [ -e "$src" ] && [ ! -e "$dst" ]; then
+      echo "Moving existing $item from $src to $dst"
+      mkdir -p "$(dirname "$dst")"
+      mv "$src" "$dst"
+    fi
+  done
+
+  mkdir -p "$pm/pm_data"
+  mkdir -p "$pm/pm_exports"
+  if [ ! -f "$pm/.install-complete" ]; then
+    touch "$pm/.install-complete"
+    echo "Created missing install marker for coherence: $pm/.install-complete"
+  fi
+
+  echo "Project Memory layout verification complete."
+}
+
+ensure_project_memory_layout
+
 # Cleanup: if running from a nested sqlite-mcp folder, move it into Project Memory
 script_root="$(dirname "$(readlink -f "$0")")"
 if [ "$repo_root" != "$script_root" ] && [ -d "$project_memory" ]; then

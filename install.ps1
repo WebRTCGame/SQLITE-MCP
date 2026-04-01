@@ -397,6 +397,51 @@ if (-Not $alreadyInstalled) {
     Write-Host "Install marker already present: $installationMarker"
 }
 
+function Ensure-ProjectMemoryLayout {
+    param(
+        [string]$ProjectMemoryRoot,
+        [string]$ProjectRoot
+    )
+
+    $desiredPaths = @{
+        '.venv' = Join-Path $ProjectMemoryRoot '.venv'
+        'pm_data' = Join-Path $ProjectMemoryRoot 'pm_data'
+        'pm_exports' = Join-Path $ProjectMemoryRoot 'pm_exports'
+        '.install-complete' = Join-Path $ProjectMemoryRoot '.install-complete'
+    }
+
+    foreach ($item in @('.venv', 'data', 'exports')) {
+        $src = Join-Path $ProjectRoot $item
+        switch ($item) {
+            '.venv' { $dst = $desiredPaths['.venv'] }
+            'data' { $dst = Join-Path $desiredPaths['pm_data'] '' }
+            'exports' { $dst = $desiredPaths['pm_exports'] }
+        }
+        if ((Test-Path $src) -and -Not (Test-Path $dst)) {
+            Write-Host "Moving existing $item from $src to $dst"
+            if (-Not (Test-Path (Split-Path $dst))) { New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null }
+            Move-Item -Path $src -Destination $dst -Force
+        }
+    }
+
+    if (-Not (Test-Path $desiredPaths['pm_data'])) {
+        Write-Host "Creating missing pm_data directory: $($desiredPaths['pm_data'])"
+        New-Item -ItemType Directory -Path $desiredPaths['pm_data'] -Force | Out-Null
+    }
+    if (-Not (Test-Path $desiredPaths['pm_exports'])) {
+        Write-Host "Creating missing pm_exports directory: $($desiredPaths['pm_exports'])"
+        New-Item -ItemType Directory -Path $desiredPaths['pm_exports'] -Force | Out-Null
+    }
+    if (-Not (Test-Path $desiredPaths['.install-complete'])) {
+        New-Item -ItemType File -Path $desiredPaths['.install-complete'] -Force | Out-Null
+        Write-Host "Created missing install marker for coherence: $($desiredPaths['.install-complete'])"
+    }
+
+    Write-Host "Project Memory layout verification complete."
+}
+
+Ensure-ProjectMemoryLayout -ProjectMemoryRoot $projectMemoryFolder -ProjectRoot $projectRoot
+
 # Cleanup: if we are running from a nested sqlite-mcp checkout, move that folder into Project Memory
 if ($projectRootOriginal -and $scriptRoot -and ($projectRootOriginal -ne $scriptRoot) -and (Test-Path $projectMemoryFolder)) {
     $repoFolderName = Split-Path -Path $scriptRoot -Leaf
