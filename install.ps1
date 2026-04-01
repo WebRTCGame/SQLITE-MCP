@@ -33,7 +33,7 @@ if ([System.IO.Path]::GetFileName($scriptRoot) -ieq 'sqlite-mcp') {
 Write-Host "Using project root: $projectRoot"
 Set-Location $projectRoot
 
-function Flatten-NestedCheckout {
+function Move-NestedCheckout {
     param(
         [string]$ScriptRoot,
         [string]$ProjectRoot,
@@ -99,7 +99,7 @@ $isNestedInstall = $scriptRoot -ne $projectRoot
 
 # Move repo contents into Project Memory so nothing from sqlite-mcp pollutes the user's project root.
 if ($isNestedInstall) {
-    Flatten-NestedCheckout -ScriptRoot $scriptRoot -ProjectRoot $projectRoot -ProjectMemoryFolder $projectMemoryFolder -InstallScriptPath $MyInvocation.MyCommand.Path
+    Move-NestedCheckout -ScriptRoot $scriptRoot -ProjectRoot $projectRoot -ProjectMemoryFolder $projectMemoryFolder -InstallScriptPath $MyInvocation.MyCommand.Path
     $scriptRoot = $projectRoot
 }
 
