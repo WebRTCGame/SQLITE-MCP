@@ -28,6 +28,12 @@ SQLite-backed MCP server for storing project memory as a graph-friendly relation
 Clone the repo into a `sqlite-mcp` subfolder of your project, then run the installer once.
 The script detects its location, places all runtime files inside `Project Memory/`, and writes `.vscode/mcp.json`.
 
+**No Python installation required.** The installer downloads `uv` and uses it to fetch
+a pinned CPython 3.12.9 interpreter automatically. The interpreter is cached in
+`Project Memory/.uv/python/` and the virtual environment is created in `Project Memory/.venv`.
+If the `uv` download fails (e.g. behind a firewall) the installer falls back to any
+Python 3.11+ already on the machine.
+
 Important: open VS Code on your project root (the parent folder), not on the `sqlite-mcp` subfolder.
 The MCP config is written to the project root at `.vscode/mcp.json`.
 
@@ -60,10 +66,19 @@ Optional flag:
 
 ### pip only (developer / advanced)
 
+Used when you want to manage the environment yourself (requires Python 3.11+):
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # or .venv\Scripts\Activate.ps1 on Windows
 pip install -e .
+```
+
+Or with uv directly (no system Python needed — uv downloads Python automatically):
+
+```bash
+uv venv --python 3.12.9 .venv
+uv pip install -e .
 ```
 
 Full example:
@@ -80,11 +95,21 @@ Full example:
 
 ## Paths
 
-- `Project Memory/.venv`
+- `Project Memory/.venv` — virtual environment (pinned Python 3.12.9)
+- `Project Memory/.uv/bin/uv[.exe]` — uv runtime manager (downloaded by installer)
+- `Project Memory/.uv/python/` — pinned CPython interpreter (fetched by uv on first run)
 - `Project Memory/pm_data/project_memory.db`
 - `Project Memory/pm_exports`
 - `.vscode/mcp.json`
 - `.vscode/settings.json` may also be created automatically by Copilot/VS Code with `chat.mcp.serverSampling` entries for `sqlite-project-memory`; this is expected.
+
+To override the pinned Python version:
+```powershell
+$env:SQLITE_MCP_PYTHON_VERSION = "3.13.0"; .\sqlite-mcp\install.ps1
+```
+```bash
+SQLITE_MCP_PYTHON_VERSION=3.13.0 ./sqlite-mcp/install.sh
+```
 
 ## CLI tools
 

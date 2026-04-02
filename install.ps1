@@ -23,6 +23,28 @@ if ($LogFile) {
 $ErrorActionPreference = 'Stop'
 Write-Host "=== SQLite MCP install script started ==="
 
+# ---- Managed Runtime: Pinned Versions -----------------------------------------------
+# uv downloads and manages a pinned CPython interpreter — no local Python prerequisite.
+# Override with environment variables if needed:
+#   $env:SQLITE_MCP_UV_VERSION      e.g. "0.6.6"
+#   $env:SQLITE_MCP_PYTHON_VERSION  e.g. "3.13.0"
+# See https://github.com/astral-sh/uv/releases for available uv versions.
+$UvVersion     = if ($env:SQLITE_MCP_UV_VERSION)     { $env:SQLITE_MCP_UV_VERSION     } else { "0.6.6" }
+$PythonVersion = if ($env:SQLITE_MCP_PYTHON_VERSION) { $env:SQLITE_MCP_PYTHON_VERSION } else { "3.12.9" }
+
+# Try to resolve the latest uv version dynamically so the pinned fallback stays current.
+try {
+    $uvApiResp = Invoke-RestMethod `
+        -Uri 'https://api.github.com/repos/astral-sh/uv/releases/latest' `
+        -Headers @{ 'User-Agent' = 'sqlite-mcp-installer' } `
+        -TimeoutSec 10 -ErrorAction Stop
+    $UvVersion = $uvApiResp.tag_name -replace '^v', ''
+    Write-Host "uv latest release detected: $UvVersion"
+} catch {
+    Write-Host "Could not fetch latest uv version from GitHub API; using fallback: $UvVersion"
+}
+# -------------------------------------------------------------------------------------
+
 function Invoke-NativeCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -89,31 +111,76 @@ foreach ($mapping in $moveMappings) {
     Move-Item -Path $mapping.Source -Destination $mapping.Destination -Force
 }
 
-# Create virtual environment inside Project Memory
+# ---- Managed Runtime: download uv, then create venv with pinned Python ----
 $venvPath = Join-Path $projectMemoryFolder '.venv'
-function New-VenvWithTimeout {
-    param([string]$Target, [int]$TimeoutSec = 300)
-    $job = Start-Job -ScriptBlock { param($t); python -m venv $t } -ArgumentList $Target
-    if (-not (Wait-Job $job -Timeout $TimeoutSec)) {
-        Stop-Job $job -Force | Out-Null
-        Remove-Job $job | Out-Null
-        throw "venv creation timed out after $TimeoutSec seconds"
+$uvBinDir = Join-Path $projectMemoryFolder '.uv\bin'
+$uvPyDir  = Join-Path $projectMemoryFolder '.uv\python'
+
+function Get-UvBinary {
+    param([string]$BinDir, [string]$Version)
+    $uvExe = Join-Path $BinDir 'uv.exe'
+    if (Test-Path $uvExe) {
+        Write-Host "uv already present: $uvExe"
+        return $uvExe
     }
-    $result = Receive-Job $job -ErrorAction SilentlyContinue
-    Remove-Job $job | Out-Null
-    return $result
+
+    New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+    $arch   = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+    $target = "$arch-pc-windows-msvc"
+    $zipUrl = "https://github.com/astral-sh/uv/releases/download/$Version/uv-$target.zip"
+    $zipTmp = Join-Path $env:TEMP "uv-$Version.zip"
+
+    Write-Host "Downloading uv $Version ($target)..."
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipTmp -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $zipTmp -DestinationPath $BinDir -Force -ErrorAction Stop
+        Remove-Item $zipTmp -Force -ErrorAction SilentlyContinue
+
+        # Normalise: some releases nest the binary one level deep
+        if (-Not (Test-Path $uvExe)) {
+            $found = Get-ChildItem -Path $BinDir -Recurse -Filter 'uv.exe' -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+            if ($found) { Move-Item -Path $found.FullName -Destination $uvExe -Force }
+        }
+
+        if (Test-Path $uvExe) {
+            Write-Host "uv ready: $uvExe"
+            return $uvExe
+        }
+        Write-Warning "uv.exe not found after extraction."
+    } catch {
+        Write-Warning "uv download failed: $_"
+    }
+    Remove-Item $zipTmp -Force -ErrorAction SilentlyContinue
+    return $null
 }
 
+$uvExe = Get-UvBinary -BinDir $uvBinDir -Version $UvVersion
+
 if (-Not (Test-Path $venvPath)) {
-    Write-Host "Creating Python virtual environment in $venvPath..."
-    try {
-        New-VenvWithTimeout -Target $venvPath -TimeoutSec 300
-    } catch {
-        Write-Warning "Python venv creation failed or timed out, trying --without-pip fallback. Error: $_"
-        python -m venv $venvPath --without-pip
-        $fallbackPython = Join-Path $venvPath 'Scripts\python.exe'
-        Write-Host "Bootstrapping pip in fallback venv..."
-        & $fallbackPython -m ensurepip --default-pip
+    if ($uvExe) {
+        Write-Host "Creating virtual environment (Python $PythonVersion via uv)..."
+        $env:UV_PYTHON_INSTALL_DIR = $uvPyDir
+        Invoke-NativeCommand -Label 'Create venv (uv)' -Command {
+            & $uvExe venv --python $PythonVersion $venvPath
+        }
+    } else {
+        Write-Host "uv unavailable — falling back to system Python for venv creation..."
+        try {
+            $fbJob = Start-Job -ScriptBlock { param($t); python -m venv $t } -ArgumentList $venvPath
+            if (-not (Wait-Job $fbJob -Timeout 300)) {
+                Stop-Job $fbJob -Force | Out-Null; Remove-Job $fbJob | Out-Null
+                throw "venv creation timed out after 300 seconds"
+            }
+            Remove-Job $fbJob | Out-Null
+        } catch {
+            Write-Warning "Python venv creation failed or timed out; trying --without-pip fallback. Error: $_"
+            python -m venv $venvPath --without-pip
+            $fallbackPython = Join-Path $venvPath 'Scripts\python.exe'
+            Write-Host "Bootstrapping pip in fallback venv..."
+            & $fallbackPython -m ensurepip --default-pip
+        }
     }
 } else {
     Write-Host ".venv already exists at $venvPath, skipping creation."
@@ -127,17 +194,32 @@ if (-Not (Test-Path $venvPython)) {
 
 Write-Host "Using virtual environment python: $venvPython"
 Write-Host "Installing package from $sourceRoot..."
-Invoke-NativeCommand -Label 'Install build prerequisites' -Command {
-    & $venvPython -m pip install --disable-pip-version-check --no-input setuptools wheel
-}
-if ($isNestedInstall) {
-    Write-Host "Nested install detected: using non-editable package install because source files move into Project Memory after install."
-    Invoke-NativeCommand -Label 'Install package' -Command {
-        & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation $sourceRoot
+if ($uvExe -and (Test-Path $uvExe)) {
+    $env:UV_PYTHON_INSTALL_DIR = $uvPyDir
+    if ($isNestedInstall) {
+        Write-Host "Nested install: non-editable install via uv."
+        Invoke-NativeCommand -Label 'Install package (uv)' -Command {
+            & $uvExe pip install --python $venvPython $sourceRoot
+        }
+    } else {
+        Invoke-NativeCommand -Label 'Install package (uv, editable)' -Command {
+            & $uvExe pip install --python $venvPython -e $sourceRoot
+        }
     }
 } else {
-    Invoke-NativeCommand -Label 'Install package' -Command {
-        & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation -e $sourceRoot
+    Write-Host "uv unavailable — falling back to pip..."
+    Invoke-NativeCommand -Label 'Install build prerequisites (pip)' -Command {
+        & $venvPython -m pip install --disable-pip-version-check --no-input setuptools wheel
+    }
+    if ($isNestedInstall) {
+        Write-Host "Nested install detected: using non-editable package install because source files move into Project Memory after install."
+        Invoke-NativeCommand -Label 'Install package (pip)' -Command {
+            & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation $sourceRoot
+        }
+    } else {
+        Invoke-NativeCommand -Label 'Install package (pip, editable)' -Command {
+            & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation -e $sourceRoot
+        }
     }
 }
 

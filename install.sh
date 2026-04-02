@@ -50,6 +50,28 @@ else
   is_nested_install=false
 fi
 
+# ---- Managed Runtime: Pinned Versions -----------------------------------------------
+# uv downloads and manages a pinned CPython interpreter — no local Python prerequisite.
+# Override with environment variables if needed:
+#   SQLITE_MCP_UV_VERSION      e.g. "0.6.6"
+#   SQLITE_MCP_PYTHON_VERSION  e.g. "3.13.0"
+# See https://github.com/astral-sh/uv/releases for available uv versions.
+uv_version="${SQLITE_MCP_UV_VERSION:-0.6.6}"
+python_version="${SQLITE_MCP_PYTHON_VERSION:-3.12.9}"
+
+# Try to resolve the latest uv version dynamically so the fallback stays current.
+latest_uv="$(curl -fsSL --max-time 10 \
+  'https://api.github.com/repos/astral-sh/uv/releases/latest' \
+  -H 'User-Agent: sqlite-mcp-installer' \
+  2>/dev/null | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')"
+if [ -n "$latest_uv" ]; then
+  uv_version="$latest_uv"
+  echo "uv latest release detected: $uv_version"
+else
+  echo "Could not fetch latest uv version from GitHub API; using fallback: $uv_version"
+fi
+# -------------------------------------------------------------------------------------
+
 # Resolve source root: developer scenario (repo_root IS the repo), nested install (pyproject.toml
 # still in script_root because _finalize-install.sh runs after this script exits), PM folder
 # (already moved from a prior run), or fallback.
@@ -78,18 +100,80 @@ for mapping in ".venv:.venv" "data:pm_data" "exports:pm_exports"; do
   fi
 done
 
-python_exec="$(command -v python3 || command -v python)"
-if [ -z "$python_exec" ]; then
-  echo "Python not found. Install Python 3 and retry."
-  exit 1
+# ---- Managed Runtime: download uv, then create venv with pinned Python ----
+uv_bin_dir="$project_memory/.uv/bin"
+uv_py_dir="$project_memory/.uv/python"
+uv_exe="$uv_bin_dir/uv"
+
+download_uv() {
+  if [ -x "$uv_exe" ]; then
+    echo "uv already present: $uv_exe"
+    return 0
+  fi
+  mkdir -p "$uv_bin_dir"
+  local os_type arch target
+  os_type="$(uname -s)"
+  arch="$(uname -m)"
+  case "$os_type" in
+    Darwin)
+      case "$arch" in
+        arm64) target="aarch64-apple-darwin" ;;
+        *)     target="x86_64-apple-darwin" ;;
+      esac
+      ;;
+    Linux)
+      case "$arch" in
+        aarch64) target="aarch64-unknown-linux-musl" ;;
+        *)       target="x86_64-unknown-linux-musl" ;;
+      esac
+      ;;
+    *)
+      echo "Warning: unsupported OS $os_type for uv download."
+      return 1
+      ;;
+  esac
+  local url="https://github.com/astral-sh/uv/releases/download/$uv_version/uv-$target.tar.gz"
+  echo "Downloading uv $uv_version ($target)..."
+  if curl -fsSL --max-time 120 "$url" | tar -xz -C "$uv_bin_dir"; then
+    # Normalise: some releases nest the binary one level deep
+    if [ ! -x "$uv_exe" ]; then
+      local found
+      found="$(find "$uv_bin_dir" -maxdepth 2 -name "uv" -type f 2>/dev/null | head -1)"
+      if [ -n "$found" ] && [ "$found" != "$uv_exe" ]; then
+        mv "$found" "$uv_exe"
+      fi
+    fi
+    chmod +x "$uv_exe" 2>/dev/null || true
+    if [ -x "$uv_exe" ]; then
+      echo "uv ready: $uv_exe"
+      return 0
+    fi
+  fi
+  echo "Warning: uv download or extraction failed."
+  return 1
+}
+
+uv_available=false
+if download_uv; then
+  uv_available=true
 fi
 
 if [ ! -d "$project_memory/.venv" ]; then
-  echo "Creating Python virtual environment in $project_memory/.venv..."
-  if ! timeout 300 "$python_exec" -m venv "$project_memory/.venv"; then
-    echo "Warning: venv creation failed or timed out; retrying with --without-pip fallback."
-    "$python_exec" -m venv --without-pip "$project_memory/.venv"
-    "$project_memory/.venv/bin/python" -m ensurepip --default-pip
+  if [ "$uv_available" = true ]; then
+    echo "Creating virtual environment (Python $python_version via uv)..."
+    UV_PYTHON_INSTALL_DIR="$uv_py_dir" "$uv_exe" venv --python "$python_version" "$project_memory/.venv"
+  else
+    echo "uv unavailable — falling back to system Python for venv creation..."
+    python_exec="$(command -v python3 || command -v python)"
+    if [ -z "$python_exec" ]; then
+      echo "Python not found. Install Python 3 and retry."
+      exit 1
+    fi
+    if ! timeout 300 "$python_exec" -m venv "$project_memory/.venv"; then
+      echo "Warning: venv creation failed or timed out; retrying with --without-pip fallback."
+      "$python_exec" -m venv --without-pip "$project_memory/.venv"
+      "$project_memory/.venv/bin/python" -m ensurepip --default-pip
+    fi
   fi
 else
   echo ".venv already exists, skipping creation."
@@ -102,12 +186,23 @@ if [ ! -x "$venv_python" ]; then
 fi
 
 echo "Installing package from $source_root..."
-"$venv_python" -m pip install --disable-pip-version-check --no-input setuptools wheel
-if [ "$is_nested_install" = true ]; then
-  echo "Nested install detected: using non-editable package install because source files move into Project Memory after install."
-  "$venv_python" -m pip install --disable-pip-version-check --no-input --no-build-isolation "$source_root"
+if [ "$uv_available" = true ]; then
+  export UV_PYTHON_INSTALL_DIR="$uv_py_dir"
+  if [ "$is_nested_install" = true ]; then
+    echo "Nested install: non-editable install via uv."
+    "$uv_exe" pip install --python "$venv_python" "$source_root"
+  else
+    "$uv_exe" pip install --python "$venv_python" -e "$source_root"
+  fi
 else
-  "$venv_python" -m pip install --disable-pip-version-check --no-input --no-build-isolation -e "$source_root"
+  echo "uv unavailable — falling back to pip..."
+  "$venv_python" -m pip install --disable-pip-version-check --no-input setuptools wheel
+  if [ "$is_nested_install" = true ]; then
+    echo "Nested install detected: non-editable install via pip."
+    "$venv_python" -m pip install --disable-pip-version-check --no-input --no-build-isolation "$source_root"
+  else
+    "$venv_python" -m pip install --disable-pip-version-check --no-input --no-build-isolation -e "$source_root"
+  fi
 fi
 
 db_path="$project_memory/pm_data/project_memory.db"
