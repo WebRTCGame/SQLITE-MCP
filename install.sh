@@ -102,7 +102,13 @@ if [ ! -x "$venv_python" ]; then
 fi
 
 echo "Installing package from $source_root..."
-"$venv_python" -m pip install --disable-pip-version-check --no-input -e "$source_root"
+"$venv_python" -m pip install --disable-pip-version-check --no-input wheel
+if [ "$is_nested_install" = true ]; then
+  echo "Nested install detected: using non-editable package install because source files move into Project Memory after install."
+  "$venv_python" -m pip install --disable-pip-version-check --no-input --no-build-isolation "$source_root"
+else
+  "$venv_python" -m pip install --disable-pip-version-check --no-input --no-build-isolation -e "$source_root"
+fi
 
 db_path="$project_memory/pm_data/project_memory.db"
 export_dir="$project_memory/pm_exports"

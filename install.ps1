@@ -113,7 +113,13 @@ if (-Not (Test-Path $venvPython)) {
 
 Write-Host "Using virtual environment python: $venvPython"
 Write-Host "Installing package from $sourceRoot..."
-& $venvPython -m pip install --disable-pip-version-check --no-input -e $sourceRoot
+& $venvPython -m pip install --disable-pip-version-check --no-input wheel
+if ($isNestedInstall) {
+    Write-Host "Nested install detected: using non-editable package install because source files move into Project Memory after install."
+    & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation $sourceRoot
+} else {
+    & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation -e $sourceRoot
+}
 
 $dbPath    = Join-Path $projectMemoryFolder 'pm_data\project_memory.db'
 $exportDir = Join-Path $projectMemoryFolder 'pm_exports'

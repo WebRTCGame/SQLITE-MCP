@@ -115,7 +115,7 @@ $remaining = Get-ChildItem -Path $ScriptRoot -Force -ErrorAction SilentlyContinu
     Where-Object { -not $selfPath -or ((Resolve-Path $_.FullName -ErrorAction SilentlyContinue).Path -ine $selfPath) }
 if (-not $remaining) {
     if (Invoke-WithRetry -Label "Remove source folder $ScriptRoot" -Attempts 5 -DelaySeconds 2 -Action {
-        Remove-Item -Path $ScriptRoot -Force -ErrorAction Stop
+        Remove-Item -Path $ScriptRoot -Recurse -Force -Confirm:$false -ErrorAction Stop
     }) {
         Write-Host "Removed empty source folder: $ScriptRoot"
     } else {
@@ -143,7 +143,7 @@ if ($selfPath) {
         }) {
             # Also attempt to remove the now-empty ScriptRoot.
             Invoke-WithRetry -Label "Remove source folder $ScriptRoot after self-move" -Attempts 5 -DelaySeconds 2 -Action {
-                Remove-Item -Path $ScriptRoot -Force -ErrorAction Stop
+                Remove-Item -Path $ScriptRoot -Recurse -Force -Confirm:$false -ErrorAction Stop
             } | Out-Null
         } else {
             # Schedule via cmd after this process exits.
@@ -154,7 +154,7 @@ if ($selfPath) {
             $srcQuoted  = $selfPath  -replace '"', '\"'
             $dstQuoted  = $selfDst   -replace '"', '\"'
             $rootQuoted = $ScriptRoot -replace '"', '\"'
-            $lines = "@echo off`r`ntimeout /t 2 /nobreak >nul`r`nmove /Y `"$srcQuoted`" `"$dstQuoted`" >nul 2>&1`r`nrd /Q `"$rootQuoted`" >nul 2>&1`r`ndel /F /Q `"%~f0`" >nul 2>&1"
+            $lines = "@echo off`r`ntimeout /t 2 /nobreak >nul`r`nmove /Y `"$srcQuoted`" `"$dstQuoted`" >nul 2>&1`r`nrmdir /S /Q `"$rootQuoted`" >nul 2>&1`r`ndel /F /Q `"%~f0`" >nul 2>&1"
             [System.IO.File]::WriteAllText($tmpCmd, $lines)
             Start-Process 'cmd' -ArgumentList "/c `"$tmpCmd`"" -WindowStyle Hidden
         }
