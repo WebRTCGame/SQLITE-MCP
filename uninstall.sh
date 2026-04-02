@@ -96,7 +96,7 @@ if [ -f "$db_path" ]; then
   echo "Exporting data to: $export_target"
 
   if [ -x "$venv_python" ]; then
-    "$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" \
+    "$venv_python" -m sqlite_mcp_server.cli --db-path "$db_path" \
       export-views \
       --output-dir "$export_target" \
       --force \
@@ -106,7 +106,7 @@ if [ -f "$db_path" ]; then
       || echo "Warning: markdown export failed (non-fatal)."
 
     json_backup="$export_target/project_memory.snapshot.json"
-    "$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" \
+    "$venv_python" -m sqlite_mcp_server.cli --db-path "$db_path" \
       export-json \
       --output-path "$json_backup" \
       && echo "JSON snapshot exported: $json_backup" \

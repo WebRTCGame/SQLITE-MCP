@@ -83,7 +83,7 @@ if (Test-Path $dbPath) {
 
     if (Test-Path $venvPython) {
         try {
-            & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" `
+                        & $venvPython -m sqlite_mcp_server.cli --db-path "$dbPath" `
                 export-views `
                 --output-dir "$exportTarget" `
                 --force `
@@ -96,7 +96,7 @@ if (Test-Path $dbPath) {
 
         try {
             $jsonBackup = Join-Path $exportTarget "project_memory.snapshot.json"
-            & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" `
+                        & $venvPython -m sqlite_mcp_server.cli --db-path "$dbPath" `
                 export-json `
                 --output-path "$jsonBackup"
             Write-Host "JSON snapshot exported: $jsonBackup"

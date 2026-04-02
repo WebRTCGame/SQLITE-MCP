@@ -152,7 +152,7 @@ Write-Host "Bootstrapping project memory..."
 $env:SQLITE_MCP_DB_PATH    = $dbPath
 $env:SQLITE_MCP_EXPORT_DIR = $exportDir
 Invoke-NativeCommand -Label 'Bootstrap project memory' -Command {
-    & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" bootstrap-self --repo-root "$projectRoot"
+    & $venvPython -m sqlite_mcp_server.cli --db-path "$dbPath" bootstrap-self --repo-root "$projectRoot"
 }
 
 # Stop any running server processes before health checks
@@ -176,10 +176,10 @@ if ($runningMcp) {
 
 Write-Host "Running health checks..."
 Invoke-NativeCommand -Label 'Project state health check' -Command {
-    & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" project-state
+    & $venvPython -m sqlite_mcp_server.cli --db-path "$dbPath" project-state
 }
 Invoke-NativeCommand -Label 'Database health check' -Command {
-    & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" health
+    & $venvPython -m sqlite_mcp_server.cli --db-path "$dbPath" health
 }
 
 # Write .vscode/mcp.json (always project-local)

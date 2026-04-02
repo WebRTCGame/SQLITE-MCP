@@ -119,16 +119,16 @@ export SQLITE_MCP_DB_PATH="$db_path"
 export SQLITE_MCP_EXPORT_DIR="$export_dir"
 
 echo "Bootstrapping project memory..."
-"$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" bootstrap-self --repo-root "$repo_root"
+"$venv_python" -m sqlite_mcp_server.cli --db-path "$db_path" bootstrap-self --repo-root "$repo_root"
 
-if ! "$venv_python" -m sqlite_project_memory_admin --help >/dev/null 2>&1; then
-  echo "sqlite_project_memory_admin module not available in venv after install."
+if ! "$venv_python" -m sqlite_mcp_server.cli --help >/dev/null 2>&1; then
+  echo "sqlite_mcp_server.cli module not available in venv after install."
   exit 1
 fi
 
 echo "Running health checks..."
-"$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" project-state
-"$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" health
+"$venv_python" -m sqlite_mcp_server.cli --db-path "$db_path" project-state
+"$venv_python" -m sqlite_mcp_server.cli --db-path "$db_path" health
 
 # Write .vscode/mcp.json (always project-local)
 mkdir -p "$repo_root/.vscode"
