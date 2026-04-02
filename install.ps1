@@ -336,10 +336,11 @@ if ($isNestedInstall) {
         $projectRootQuoted = $projectRoot.Replace('"', '""')
         $projectMemoryQuoted = $projectMemoryFolder.Replace('"', '""')
         $finalizeLogQuoted = $finalizeLog.Replace('"', '""')
+        $launchLine = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -ScriptRoot "{1}" -ProjectRoot "{2}" -ProjectMemoryFolder "{3}" -LogFile "{4}"' -f $finalizeScriptQuoted, $scriptRootQuoted, $projectRootQuoted, $projectMemoryQuoted, $finalizeLogQuoted
         $cmdLines = @(
             '@echo off',
             'timeout /t 2 /nobreak >nul',
-            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$finalizeScriptQuoted\" -ScriptRoot \"$scriptRootQuoted\" -ProjectRoot \"$projectRootQuoted\" -ProjectMemoryFolder \"$projectMemoryQuoted\" -LogFile \"$finalizeLogQuoted\"",
+            $launchLine,
             'del /F /Q "%~f0" >nul 2>&1'
         ) -join "`r`n"
         [System.IO.File]::WriteAllText($tmpCmd, $cmdLines)
