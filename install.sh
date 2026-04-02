@@ -96,11 +96,17 @@ else
   echo ".venv already exists, skipping creation."
 fi
 
-source "$project_memory/.venv/bin/activate"
+venv_python="$project_memory/.venv/bin/python"
+if [ ! -x "$venv_python" ]; then
+  echo "Virtual environment python not found at $venv_python"
+  exit 1
+fi
 
 echo "Installing package from $source_root..."
-pip install --upgrade pip
-pip install -e "$source_root"
+if ! "$venv_python" -m pip install --upgrade pip --disable-pip-version-check --no-input; then
+  echo "Warning: pip self-upgrade failed (continuing)"
+fi
+"$venv_python" -m pip install -e "$source_root"
 
 db_path="$project_memory/pm_data/project_memory.db"
 export_dir="$project_memory/pm_exports"
@@ -111,16 +117,16 @@ export SQLITE_MCP_DB_PATH="$db_path"
 export SQLITE_MCP_EXPORT_DIR="$export_dir"
 
 echo "Bootstrapping project memory..."
-sqlite-project-memory-admin --db-path "$db_path" bootstrap-self --repo-root "$repo_root"
+"$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" bootstrap-self --repo-root "$repo_root"
 
-if ! command -v sqlite-project-memory-admin >/dev/null 2>&1; then
-  echo "sqlite-project-memory-admin not found after install."
+if ! "$venv_python" -m sqlite_project_memory_admin --help >/dev/null 2>&1; then
+  echo "sqlite_project_memory_admin module not available in venv after install."
   exit 1
 fi
 
 echo "Running health checks..."
-sqlite-project-memory-admin --db-path "$db_path" project-state
-sqlite-project-memory-admin --db-path "$db_path" health
+"$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" project-state
+"$venv_python" -m sqlite_project_memory_admin --db-path "$db_path" health
 
 # Write .vscode/mcp.json (always project-local)
 mkdir -p "$repo_root/.vscode"

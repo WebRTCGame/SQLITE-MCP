@@ -106,18 +106,19 @@ if (-Not (Test-Path $venvPath)) {
     Write-Host ".venv already exists at $venvPath, skipping creation."
 }
 
-$activateScript = Join-Path $venvPath 'Scripts\Activate.ps1'
-if (-Not (Test-Path $activateScript)) {
-    Write-Error "Activation script not found at $activateScript"
+$venvPython = Join-Path $venvPath 'Scripts\python.exe'
+if (-Not (Test-Path $venvPython)) {
+    Write-Error "Virtual environment python not found at $venvPython"
     exit 1
 }
 
-Write-Host "Activating virtual environment..."
-. $activateScript
-
-$venvPython = Join-Path $venvPath 'Scripts\python.exe'
+Write-Host "Using virtual environment python: $venvPython"
 Write-Host "Installing package from $sourceRoot..."
-& $venvPython -m pip install --upgrade pip
+try {
+    & $venvPython -m pip install --upgrade pip --disable-pip-version-check --no-input
+} catch {
+    Write-Warning "pip self-upgrade failed (continuing): $($_.Exception.Message)"
+}
 & $venvPython -m pip install -e $sourceRoot
 
 $dbPath    = Join-Path $projectMemoryFolder 'pm_data\project_memory.db'
@@ -130,7 +131,7 @@ if (-Not (Test-Path $exportDir))           { New-Item -ItemType Directory -Path 
 Write-Host "Bootstrapping project memory..."
 $env:SQLITE_MCP_DB_PATH    = $dbPath
 $env:SQLITE_MCP_EXPORT_DIR = $exportDir
-sqlite-project-memory-admin --db-path "$dbPath" bootstrap-self --repo-root "$projectRoot"
+& $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" bootstrap-self --repo-root "$projectRoot"
 
 # Stop any running server processes before health checks
 Write-Host "Checking for running sqlite_mcp_server processes..."
@@ -152,12 +153,8 @@ if ($runningMcp) {
 }
 
 Write-Host "Running health checks..."
-if (-Not (Get-Command sqlite-project-memory-admin -ErrorAction SilentlyContinue)) {
-    Write-Error "sqlite-project-memory-admin not found after install."
-    exit 1
-}
-sqlite-project-memory-admin --db-path "$dbPath" project-state
-sqlite-project-memory-admin --db-path "$dbPath" health
+& $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" project-state
+& $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" health
 
 # Write .vscode/mcp.json (always project-local)
 $projectVscode = Join-Path $projectRoot '.vscode'
