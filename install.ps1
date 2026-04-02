@@ -5,12 +5,14 @@ SQLite MCP installer for Windows PowerShell.
 Usage:
   .\install.ps1                       # fresh install or update
   .\install.ps1 -LogFile install.log  # with transcript logging
+    .\install.ps1 -AppendInstructions   # append snippet to suggested instructions file
 #>
 
 # Date modified: 2026-04-01
 #
 param(
-    [string]$LogFile
+    [string]$LogFile,
+    [switch]$AppendInstructions
 )
 
 if ($LogFile) {
@@ -252,6 +254,115 @@ $mcp.servers = $hashtable
 $mcp | ConvertTo-Json -Depth 10 | Set-Content -Path $mcpConfigPath -Encoding UTF8
 Write-Host "Updated MCP config at $mcpConfigPath"
 
+# Deploy copilot customizations (.github/copilot-instructions.md, skill, agent) to the target project.
+# Source files live under assets/ inside the sqlite-mcp repo (or Project Memory for nested installs).
+$assetsDir = Join-Path $sourceRoot 'assets'
+if (Test-Path $assetsDir) {
+    $githubDir = Join-Path $projectRoot '.github'
+
+    # --- Skill ---------------------------------------------------------------
+    $skillSrc    = Join-Path $assetsDir 'skills\sqlite-project-memory\SKILL.md'
+    $skillDstDir = Join-Path $githubDir 'skills\sqlite-project-memory'
+    if (Test-Path $skillSrc) {
+        if (-Not (Test-Path $skillDstDir)) { New-Item -ItemType Directory -Path $skillDstDir -Force | Out-Null }
+        Copy-Item -Path $skillSrc -Destination (Join-Path $skillDstDir 'SKILL.md') -Force
+        Write-Host "Deployed skill: $skillDstDir\SKILL.md"
+    }
+
+    # --- Agent ---------------------------------------------------------------
+    $agentSrc    = Join-Path $assetsDir 'agents\project-memory.agent.md'
+    $agentDstDir = Join-Path $githubDir 'agents'
+    if (Test-Path $agentSrc) {
+        if (-Not (Test-Path $agentDstDir)) { New-Item -ItemType Directory -Path $agentDstDir -Force | Out-Null }
+        Copy-Item -Path $agentSrc -Destination (Join-Path $agentDstDir 'project-memory.agent.md') -Force
+        Write-Host "Deployed agent: $agentDstDir\project-memory.agent.md"
+    }
+
+    # --- copilot-instructions snippet (print notice — user must add manually) ---
+    $snippetSrc = Join-Path $assetsDir 'copilot-instructions-snippet.md'
+    if (Test-Path $snippetSrc) {
+        $snippetCopied = $false
+        $instructionsCandidates = @(
+            (Join-Path $projectRoot '.github\copilot-instructions.md'),
+            (Join-Path $projectRoot 'AGENTS.md'),
+            (Join-Path $projectRoot 'CLAUDE.md')
+        )
+        $instructionsTarget = $instructionsCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-Not $instructionsTarget) {
+            $instructionsTarget = Join-Path $projectRoot '.github\copilot-instructions.md'
+        }
+
+        $snippetText = Get-Content -Path $snippetSrc -Raw
+
+        if ($AppendInstructions) {
+            try {
+                $targetDir = Split-Path -Parent $instructionsTarget
+                if ($targetDir -and -Not (Test-Path $targetDir)) {
+                    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+                }
+                if (-Not (Test-Path $instructionsTarget)) {
+                    New-Item -ItemType File -Path $instructionsTarget -Force | Out-Null
+                }
+                $existingTarget = Get-Content -Path $instructionsTarget -Raw -ErrorAction SilentlyContinue
+                if ($existingTarget -notmatch 'sqlite-project-memory') {
+                    if ($existingTarget -and -not $existingTarget.EndsWith("`n")) {
+                        Add-Content -Path $instructionsTarget -Value "`n"
+                    }
+                    Add-Content -Path $instructionsTarget -Value "`n---`n$snippetText"
+                    Write-Host "Appended SQLite Project Memory snippet to: $instructionsTarget"
+                } else {
+                    Write-Host "Instructions target already contains sqlite-project-memory section: $instructionsTarget"
+                }
+            } catch {
+                Write-Warning "Could not append instructions automatically: $($_.Exception.Message)"
+            }
+        }
+
+        if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+            try {
+                $snippetText | Set-Clipboard
+                $snippetCopied = $true
+            } catch {
+                Write-Warning "Could not copy snippet to clipboard: $($_.Exception.Message)"
+            }
+        }
+
+        Write-Host ""
+        Write-Host "=== ACTION REQUIRED: Add AI instructions ===" -ForegroundColor Yellow
+        Write-Host "Append the snippet below to your AI instructions file"
+        Write-Host "(.github/copilot-instructions.md, AGENTS.md, CLAUDE.md, etc.)."
+        Write-Host "Suggested target: $instructionsTarget"
+        Write-Host "A copy is saved at: $snippetSrc"
+        if ($snippetCopied) {
+            Write-Host "Snippet copied to clipboard."
+        } else {
+            Write-Host "Clipboard copy unavailable; copy from the snippet below."
+        }
+        Write-Host "--- snippet start ---"
+        $snippetText | Write-Host
+        Write-Host "--- snippet end ---"
+
+        if (Get-Command code -ErrorAction SilentlyContinue) {
+            try {
+                $targetDir = Split-Path -Parent $instructionsTarget
+                if ($targetDir -and -Not (Test-Path $targetDir)) {
+                    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+                }
+                if (-Not (Test-Path $instructionsTarget)) {
+                    New-Item -ItemType File -Path $instructionsTarget -Force | Out-Null
+                }
+                code $instructionsTarget | Out-Null
+                Write-Host "Opened in VS Code: $instructionsTarget"
+            } catch {
+                Write-Warning "Could not open target instructions file: $($_.Exception.Message)"
+            }
+        }
+        Write-Host ""
+    }
+} else {
+    Write-Host "Assets directory not found at $assetsDir; skipping copilot customization deployment."
+}
+
 # Optional post-install hook
 $postInstallHook = Join-Path $projectRoot '.scripts\post_install.ps1'
 if (Test-Path $postInstallHook) {
@@ -294,6 +405,37 @@ if ($isNestedInstall) {
 Write-Host "=== Install complete ==="
 Write-Host "Project Memory: $projectMemoryFolder"
 Write-Host "MCP config:     $mcpConfigPath"
+
+$agentPath = Join-Path $projectRoot '.github\agents\project-memory.agent.md'
+$skillPath = Join-Path $projectRoot '.github\skills\sqlite-project-memory\SKILL.md'
+$instructionsTargets = @(
+    (Join-Path $projectRoot '.github\copilot-instructions.md'),
+    (Join-Path $projectRoot 'AGENTS.md'),
+    (Join-Path $projectRoot 'CLAUDE.md')
+)
+$instructionsFound = $false
+foreach ($target in $instructionsTargets) {
+    if (Test-Path $target) {
+        $targetText = Get-Content -Path $target -Raw -ErrorAction SilentlyContinue
+        if ($targetText -match 'sqlite-project-memory') {
+            $instructionsFound = $true
+            break
+        }
+    }
+}
+
+Write-Host ""
+Write-Host "=== Usage Gates Report ==="
+Write-Host ("[PASS] .vscode/mcp.json has sqlite-project-memory entry: {0}" -f (Test-Path $mcpConfigPath))
+Write-Host ("[PASS] Project Memory agent file exists: {0}" -f (Test-Path $agentPath))
+Write-Host ("[PASS] sqlite-project-memory skill file exists: {0}" -f (Test-Path $skillPath))
+Write-Host ("[{0}] Instructions snippet found in project instructions file" -f ($(if ($instructionsFound) { 'PASS' } else { 'ACTION REQUIRED' })))
+Write-Host "[ACTION REQUIRED] Approve/trust MCP server in VS Code if prompted."
+Write-Host "[ACTION REQUIRED] Reload VS Code window after install if tools do not appear."
+Write-Host "[ACTION REQUIRED] Use Agent mode and choose Project Memory agent (or /sqlite-project-memory)."
+if (-not $instructionsFound) {
+    Write-Host "Next: paste the SQLite Project Memory snippet into your project instructions file." -ForegroundColor Yellow
+}
 
 if ($LogFile) {
     Stop-Transcript

@@ -38,6 +38,7 @@ git clone https://github.com/WebRTCGame/SQLITE-MCP.git sqlite-mcp
 
 Optional flag:
 - `-LogFile install.log` — save a full transcript for debugging
+- `-AppendInstructions` — append snippet to the suggested instructions file (idempotent)
 
 ### Linux / macOS
 
@@ -50,6 +51,7 @@ chmod +x ./sqlite-mcp/install.sh
 
 Optional flag:
 - `--log-file install.log` — save a full transcript for debugging
+- `--append-instructions` — append snippet to the suggested instructions file (idempotent)
 
 **To update:** re-run the same command. The installer is idempotent — it skips steps already done and upgrades the package in place.
 
@@ -166,4 +168,54 @@ Environment variables:
 
 - Write entities/content through MCP tools.
 - Generate docs only on explicit user request.
+
+## Add AI instructions to your project
+
+After running the installer, paste the snippet below into your AI instructions file
+(`copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, or equivalent).
+The installer also prints this snippet to the terminal as a reminder.
+
+```markdown
+## SQLite Project Memory
+
+This project uses the **`sqlite-project-memory` MCP server** as the single source of truth for all project state.
+
+### Mandatory rules
+
+- **NEVER** create, modify, or delete `.md` files for notes, tasks, decisions, roadmaps, or architecture.
+- **ALWAYS** use `sqlite-project-memory` MCP tools to store and retrieve project knowledge.
+- `README.md` is the **only** markdown file you may edit directly.
+- Files in `Project Memory/pm_exports/` are read-only derived artifacts — never edit them directly.
+
+### Tool usage guide
+
+| Intent | Tool to use |
+|--------|-------------|
+| Add a task / todo | `create_entity` (entity_type: `task`) |
+| Record a decision | `create_entity` (entity_type: `decision`) |
+| Document a component | `create_entity` (entity_type: `component`) + `write_content` |
+| Add a note to an item | `write_content` or `append_content` |
+| Query project state | `query_view`, `list_entities`, `get_entity` |
+| Search knowledge | `search_content` |
+| Link two items | `add_relationship` or `connect_entities` |
+| Export to markdown | `export_markdown_views` with `user_requested: true` — only when explicitly asked |
+
+### First action each session
+
+Before making changes, call `get_project_context` to confirm the database path and project root, then call `get_recent_activity` or `query_view` to orient yourself.
+```
+
+## Usage gates checklist
+
+For best reliability, confirm all of the following:
+
+1. `.vscode/mcp.json` contains the `sqlite-project-memory` server.
+2. VS Code MCP approval/trust prompt was accepted for this workspace.
+3. Chat is in Agent mode (not regular chat/edit mode).
+4. `Project Memory` agent is available in the agents dropdown.
+5. `/sqlite-project-memory` skill is available in slash commands.
+6. Your project instructions file includes the SQLite Project Memory snippet.
+7. Start each session with `get_project_context` then `get_recent_activity` or `query_view`.
+
+The installer prints a `Usage Gates Report` with `PASS` or `ACTION REQUIRED` for the gates it can validate automatically.
 

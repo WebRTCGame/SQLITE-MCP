@@ -7,12 +7,15 @@ set -eo pipefail
 # Usage:
 #   ./install.sh                        # fresh install or update
 #   ./install.sh --log-file install.log # with transcript logging
+#   ./install.sh --append-instructions   # append snippet to suggested instructions file
 
 LOG_FILE=""
+APPEND_INSTRUCTIONS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --log-file) LOG_FILE="$2"; shift 2 ;;
+    --append-instructions) APPEND_INSTRUCTIONS=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -188,6 +191,98 @@ PY
 
 echo "Updated MCP config at $mcp_config_path"
 
+# Deploy copilot customizations (.github/copilot-instructions.md, skill, agent) to the target project.
+# Source files live under assets/ inside the sqlite-mcp repo (or Project Memory for nested installs).
+assets_dir="$source_root/assets"
+if [ -d "$assets_dir" ]; then
+    github_dir="$repo_root/.github"
+
+    # --- Skill ---------------------------------------------------------------
+    skill_src="$assets_dir/skills/sqlite-project-memory/SKILL.md"
+    skill_dst_dir="$github_dir/skills/sqlite-project-memory"
+    if [ -f "$skill_src" ]; then
+        mkdir -p "$skill_dst_dir"
+        cp -f "$skill_src" "$skill_dst_dir/SKILL.md"
+        echo "Deployed skill: $skill_dst_dir/SKILL.md"
+    fi
+
+    # --- Agent ---------------------------------------------------------------
+    agent_src="$assets_dir/agents/project-memory.agent.md"
+    agent_dst_dir="$github_dir/agents"
+    if [ -f "$agent_src" ]; then
+        mkdir -p "$agent_dst_dir"
+        cp -f "$agent_src" "$agent_dst_dir/project-memory.agent.md"
+        echo "Deployed agent: $agent_dst_dir/project-memory.agent.md"
+    fi
+
+    # --- copilot-instructions snippet (print notice — user must add manually) ---
+    snippet_src="$assets_dir/copilot-instructions-snippet.md"
+    if [ -f "$snippet_src" ]; then
+      snippet_copied=false
+      instructions_target=""
+      for candidate in "$repo_root/.github/copilot-instructions.md" "$repo_root/AGENTS.md" "$repo_root/CLAUDE.md"; do
+        if [ -f "$candidate" ]; then
+          instructions_target="$candidate"
+          break
+        fi
+      done
+      if [ -z "$instructions_target" ]; then
+        instructions_target="$repo_root/.github/copilot-instructions.md"
+      fi
+
+      if [ "$APPEND_INSTRUCTIONS" = true ]; then
+        mkdir -p "$(dirname "$instructions_target")"
+        [ -f "$instructions_target" ] || touch "$instructions_target"
+        if ! grep -q "sqlite-project-memory" "$instructions_target"; then
+          printf '\n---\n' >> "$instructions_target"
+          cat "$snippet_src" >> "$instructions_target"
+          echo "Appended SQLite Project Memory snippet to: $instructions_target"
+        else
+          echo "Instructions target already contains sqlite-project-memory section: $instructions_target"
+        fi
+      fi
+
+      if command -v pbcopy >/dev/null 2>&1; then
+        cat "$snippet_src" | pbcopy
+        snippet_copied=true
+      elif command -v wl-copy >/dev/null 2>&1; then
+        cat "$snippet_src" | wl-copy
+        snippet_copied=true
+      elif command -v xclip >/dev/null 2>&1; then
+        xclip -selection clipboard < "$snippet_src"
+        snippet_copied=true
+      elif command -v xsel >/dev/null 2>&1; then
+        xsel --clipboard --input < "$snippet_src"
+        snippet_copied=true
+      fi
+
+        echo ""
+        echo "=== ACTION REQUIRED: Add AI instructions ==="
+        echo "Append the snippet below to your AI instructions file"
+        echo "(.github/copilot-instructions.md, AGENTS.md, CLAUDE.md, etc.)."
+      echo "Suggested target: $instructions_target"
+        echo "A copy is saved at: $snippet_src"
+      if [ "$snippet_copied" = true ]; then
+        echo "Snippet copied to clipboard."
+      else
+        echo "Clipboard copy unavailable; copy from the snippet below."
+      fi
+        echo "--- snippet start ---"
+        cat "$snippet_src"
+        echo "--- snippet end ---"
+
+      if command -v code >/dev/null 2>&1; then
+        mkdir -p "$(dirname "$instructions_target")"
+        [ -f "$instructions_target" ] || touch "$instructions_target"
+        code "$instructions_target" >/dev/null 2>&1 || true
+        echo "Opened in VS Code: $instructions_target"
+      fi
+        echo ""
+    fi
+else
+    echo "Assets directory not found at $assets_dir; skipping copilot customization deployment."
+fi
+
 # Optional post-install hook
 post_install_hook="$repo_root/.scripts/post_install.sh"
 if [ -f "$post_install_hook" ]; then
@@ -219,4 +314,43 @@ fi
 echo "=== Install complete ==="
 echo "Project Memory: $project_memory"
 echo "MCP config:     $mcp_config_path"
+
+agent_path="$repo_root/.github/agents/project-memory.agent.md"
+skill_path="$repo_root/.github/skills/sqlite-project-memory/SKILL.md"
+instructions_found=false
+for candidate in "$repo_root/.github/copilot-instructions.md" "$repo_root/AGENTS.md" "$repo_root/CLAUDE.md"; do
+  if [ -f "$candidate" ] && grep -q "sqlite-project-memory" "$candidate"; then
+    instructions_found=true
+    break
+  fi
+done
+
+echo ""
+echo "=== Usage Gates Report ==="
+if grep -q '"sqlite-project-memory"' "$mcp_config_path" 2>/dev/null; then
+  echo "[PASS] .vscode/mcp.json has sqlite-project-memory entry: true"
+else
+  echo "[ACTION REQUIRED] .vscode/mcp.json has sqlite-project-memory entry: false"
+fi
+if [ -f "$agent_path" ]; then
+  echo "[PASS] Project Memory agent file exists: true"
+else
+  echo "[ACTION REQUIRED] Project Memory agent file exists: false"
+fi
+if [ -f "$skill_path" ]; then
+  echo "[PASS] sqlite-project-memory skill file exists: true"
+else
+  echo "[ACTION REQUIRED] sqlite-project-memory skill file exists: false"
+fi
+if [ "$instructions_found" = true ]; then
+  echo "[PASS] Instructions snippet found in project instructions file"
+else
+  echo "[ACTION REQUIRED] Instructions snippet found in project instructions file"
+fi
+echo "[ACTION REQUIRED] Approve/trust MCP server in VS Code if prompted."
+echo "[ACTION REQUIRED] Reload VS Code window after install if tools do not appear."
+echo "[ACTION REQUIRED] Use Agent mode and choose Project Memory agent (or /sqlite-project-memory)."
+if [ "$instructions_found" != true ]; then
+  echo "Next: paste the SQLite Project Memory snippet into your project instructions file."
+fi
 
