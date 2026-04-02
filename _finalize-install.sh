@@ -30,6 +30,34 @@ moved=0
 skipped=0
 errors=0
 
+retry_command() {
+    local label="$1"
+    local attempts="$2"
+    local delay="$3"
+    shift 3
+
+    local attempt=1
+    while [ "$attempt" -le "$attempts" ]; do
+        if "$@"; then
+            if [ "$attempt" -gt 1 ]; then
+                echo "Succeeded after retry ($attempt/$attempts): $label"
+            fi
+            return 0
+        fi
+
+        if [ "$attempt" -eq "$attempts" ]; then
+            echo "Warning: failed after $attempts attempts: $label"
+            return 1
+        fi
+
+        echo "Retrying ($attempt/$attempts): $label"
+        sleep "$delay"
+        attempt=$((attempt + 1))
+    done
+
+    return 1
+}
+
 # Move every item from SCRIPT_ROOT (sqlite-mcp/) to PROJECT_MEMORY (Project Memory/).
 shopt -s dotglob nullglob
 for item in "$SCRIPT_ROOT"/*; do
@@ -49,7 +77,7 @@ for item in "$SCRIPT_ROOT"/*; do
         continue
     fi
 
-    if mv "$item" "$dst"; then
+    if retry_command "Move $name" 10 2 mv "$item" "$dst"; then
         echo "Moved: $name"
         moved=$((moved + 1))
     else
@@ -65,7 +93,8 @@ leaked=(src tests pyproject.toml README.md INSTALL.md "API SUMMARY.md" Chart.mmd
 for artifact in "${leaked[@]}"; do
     path="$PROJECT_ROOT/$artifact"
     if [ -e "$path" ]; then
-        rm -rf "$path" && echo "Removed leaked artifact: $artifact" \
+        retry_command "Remove leaked artifact $artifact" 10 2 rm -rf "$path" \
+            && echo "Removed leaked artifact: $artifact" \
             || echo "Warning: could not remove $path"
     fi
 done
@@ -80,13 +109,14 @@ self_name="$(basename "$self_src")"
 self_dst="$PROJECT_MEMORY/$self_name"
 
 if [ ! -e "$self_dst" ]; then
-    mv "$self_src" "$self_dst" && echo "Moved self: $self_name" \
+    retry_command "Move self $self_name" 5 2 mv "$self_src" "$self_dst" && echo "Moved self: $self_name" \
         || echo "Warning: could not move self ($self_src)"
 fi
 
 # Remove ScriptRoot if now empty.
 if [ -d "$SCRIPT_ROOT" ] && [ -z "$(ls -A "$SCRIPT_ROOT" 2>/dev/null)" ]; then
-    rmdir "$SCRIPT_ROOT" && echo "Removed empty source folder: $SCRIPT_ROOT" || true
+    retry_command "Remove source folder $SCRIPT_ROOT" 5 2 rmdir "$SCRIPT_ROOT" \
+        && echo "Removed empty source folder: $SCRIPT_ROOT" || true
 fi
 
 echo "=== Post-install finalize complete ==="

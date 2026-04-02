@@ -322,7 +322,9 @@ else
   echo "[ACTION REQUIRED] Instructions snippet found in project instructions file"
 fi
 echo "[ACTION REQUIRED] Approve/trust MCP server in VS Code if prompted."
-echo "[ACTION REQUIRED] Reload VS Code window after install if tools do not appear."
+echo "[ACTION REQUIRED] Fully reload or restart VS Code if tools do not appear."
+echo "[ACTION REQUIRED] Start a new Agent chat session after reload/restart."
+echo "[ACTION REQUIRED] If the server is not running after restart, run 'MCP: Start Server' and select 'sqlite-project-memory'."
 echo "[ACTION REQUIRED] Use Agent mode and choose Project Memory agent (or /sqlite-project-memory)."
 if [ "$instructions_found" != true ]; then
   echo "Next: paste the SQLite Project Memory snippet into your project instructions file."

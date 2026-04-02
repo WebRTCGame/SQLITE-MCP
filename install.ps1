@@ -319,25 +319,34 @@ if (-Not (Test-Path $installationMarker)) {
     Write-Host "Install marker already present (update complete): $installationMarker"
 }
 
-# For nested installs: remove any sqlite-mcp source files that leaked into project root.
-# (All source should have moved into Project Memory; this is a safety net only.)
-# For nested installs: launch _finalize-install.ps1 as a detached background process.
-# It waits for this installer to exit (releasing file locks), then moves all remaining
-# source files — including install.ps1, install.sh, and itself — into Project Memory.
+# For nested installs: schedule _finalize-install.ps1 through a temporary cmd.exe wrapper.
+# That wrapper waits for this installer to exit, then runs the finalizer with
+# ExecutionPolicy Bypass so the remaining source files — including install.ps1,
+# install.sh, and the finalize script itself — are moved into Project Memory.
 if ($isNestedInstall) {
     $finalizeScript = Join-Path $scriptRoot '_finalize-install.ps1'
     $finalizeLog    = Join-Path $projectMemoryFolder 'finalize-install.log'
     if (Test-Path $finalizeScript) {
-        Write-Host "Launching post-install file reorganization (background)..."
-        Write-Host "Finalize log: $finalizeLog"
-        Start-Process powershell -ArgumentList @(
-            '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
-            '-File', $finalizeScript,
-            '-ScriptRoot', $scriptRoot,
-            '-ProjectRoot', $projectRoot,
-            '-ProjectMemoryFolder', $projectMemoryFolder,
-            '-LogFile', $finalizeLog
+        $tmpCmd = [System.IO.Path]::Combine(
+            [System.IO.Path]::GetTempPath(),
+            "sqlite_mcp_launch_finalize_$([System.IO.Path]::GetRandomFileName()).cmd"
         )
+        $finalizeScriptQuoted = $finalizeScript.Replace('"', '""')
+        $scriptRootQuoted = $scriptRoot.Replace('"', '""')
+        $projectRootQuoted = $projectRoot.Replace('"', '""')
+        $projectMemoryQuoted = $projectMemoryFolder.Replace('"', '""')
+        $finalizeLogQuoted = $finalizeLog.Replace('"', '""')
+        $cmdLines = @(
+            '@echo off',
+            'timeout /t 2 /nobreak >nul',
+            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$finalizeScriptQuoted\" -ScriptRoot \"$scriptRootQuoted\" -ProjectRoot \"$projectRootQuoted\" -ProjectMemoryFolder \"$projectMemoryQuoted\" -LogFile \"$finalizeLogQuoted\"",
+            'del /F /Q "%~f0" >nul 2>&1'
+        ) -join "`r`n"
+        [System.IO.File]::WriteAllText($tmpCmd, $cmdLines)
+
+        Write-Host "Scheduling post-install file reorganization (background)..."
+        Write-Host "Finalize log: $finalizeLog"
+        Start-Process 'cmd.exe' -ArgumentList "/c `"$tmpCmd`"" -WindowStyle Hidden
     } else {
         Write-Warning "Finalize script not found at $finalizeScript; skipping post-install cleanup."
     }
@@ -372,7 +381,9 @@ Write-Host ("[PASS] Project Memory agent file exists: {0}" -f (Test-Path $agentP
 Write-Host ("[PASS] sqlite-project-memory skill file exists: {0}" -f (Test-Path $skillPath))
 Write-Host ("[{0}] Instructions snippet found in project instructions file" -f ($(if ($instructionsFound) { 'PASS' } else { 'ACTION REQUIRED' })))
 Write-Host "[ACTION REQUIRED] Approve/trust MCP server in VS Code if prompted."
-Write-Host "[ACTION REQUIRED] Reload VS Code window after install if tools do not appear."
+Write-Host "[ACTION REQUIRED] Fully reload or restart VS Code if tools do not appear."
+Write-Host "[ACTION REQUIRED] Start a new Agent chat session after reload/restart."
+Write-Host "[ACTION REQUIRED] If the server is not running after restart, run 'MCP: Start Server' and select 'sqlite-project-memory'."
 Write-Host "[ACTION REQUIRED] Use Agent mode and choose Project Memory agent (or /sqlite-project-memory)."
 if (-not $instructionsFound) {
     Write-Host "Next: paste the SQLite Project Memory snippet into your project instructions file." -ForegroundColor Yellow

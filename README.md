@@ -28,6 +28,9 @@ SQLite-backed MCP server for storing project memory as a graph-friendly relation
 Clone the repo into a `sqlite-mcp` subfolder of your project, then run the installer once.
 The script detects its location, places all runtime files inside `Project Memory/`, and writes `.vscode/mcp.json`.
 
+Important: open VS Code on your project root (the parent folder), not on the `sqlite-mcp` subfolder.
+The MCP config is written to the project root at `.vscode/mcp.json`.
+
 ### Windows (PowerShell)
 
 ```powershell
@@ -81,6 +84,7 @@ python -m sqlite_mcp_server
 - `Project Memory/pm_data/project_memory.db`
 - `Project Memory/pm_exports`
 - `.vscode/mcp.json`
+- `.vscode/settings.json` may also be created automatically by Copilot/VS Code with `chat.mcp.serverSampling` entries for `sqlite-project-memory`; this is expected.
 
 ## CLI tools
 
@@ -121,6 +125,7 @@ Environment variables:
    git clone https://github.com/WebRTCGame/SQLITE-MCP.git sqlite-mcp
    .\sqlite-mcp\install.ps1
    ```
+   After install, ensure VS Code is opened at the parent project root (for example `C:\CODE\TestProject`), not `C:\CODE\TestProject\sqlite-mcp`.
 3. Activate runtime venv:
    ```powershell
    & ".\Project Memory\.venv\Scripts\Activate.ps1"
@@ -144,6 +149,7 @@ Environment variables:
    chmod +x ./sqlite-mcp/install.sh
    ./sqlite-mcp/install.sh
    ```
+   After install, ensure VS Code is opened at the parent project root, not the `sqlite-mcp` subfolder.
 3. Activate runtime venv:
    ```bash
    source "Project Memory/.venv/bin/activate"
@@ -218,4 +224,6 @@ For best reliability, confirm all of the following:
 7. Start each session with `get_project_context` then `get_recent_activity` or `query_view`.
 
 The installer prints a `Usage Gates Report` with `PASS` or `ACTION REQUIRED` for the gates it can validate automatically.
+If tools still do not appear, first fully reload or restart VS Code and start a new Agent chat session.
+If the server is not already running after restart, run `MCP: Start Server` from the Command Palette, select `sqlite-project-memory`, and restart the chat session.
 

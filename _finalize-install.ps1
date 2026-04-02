@@ -35,6 +35,34 @@ $moved   = 0
 $skipped = 0
 $errors  = 0
 
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$Action,
+        [string]$Label,
+        [int]$Attempts = 15,
+        [int]$DelaySeconds = 2
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            & $Action
+            if ($attempt -gt 1) {
+                Write-Host "Succeeded after retry ($attempt/$Attempts): $Label"
+            }
+            return $true
+        } catch {
+            if ($attempt -eq $Attempts) {
+                Write-Warning "Failed after $Attempts attempts: $Label : $($_.Exception.Message)"
+                return $false
+            }
+            Write-Host "Retrying ($attempt/$Attempts): $Label"
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    return $false
+}
+
 # Move every item from ScriptRoot (sqlite-mcp/) to ProjectMemoryFolder (Project Memory/).
 foreach ($item in Get-ChildItem -Path $ScriptRoot -Force -ErrorAction SilentlyContinue) {
 
@@ -55,12 +83,12 @@ foreach ($item in Get-ChildItem -Path $ScriptRoot -Force -ErrorAction SilentlyCo
         continue
     }
 
-    try {
+    if (Invoke-WithRetry -Label "Move $($item.Name)" -Action {
         Move-Item -Path $item.FullName -Destination $dst -Force -ErrorAction Stop
+    }) {
         Write-Host "Moved: $($item.Name)"
         $moved++
-    } catch {
-        Write-Warning "Failed to move $($item.Name): $_"
+    } else {
         $errors++
     }
 }
@@ -74,11 +102,10 @@ $leakedArtifacts = @(
 foreach ($artifact in $leakedArtifacts) {
     $path = Join-Path $ProjectRoot $artifact
     if (Test-Path $path) {
-        try {
+        if (Invoke-WithRetry -Label "Remove leaked artifact $artifact" -Action {
             Remove-Item -Path $path -Recurse -Force -ErrorAction Stop
+        }) {
             Write-Host "Removed leaked artifact: $artifact"
-        } catch {
-            Write-Warning "Could not remove leaked artifact $artifact : $($_.Exception.Message)"
         }
     }
 }
@@ -87,10 +114,11 @@ foreach ($artifact in $leakedArtifacts) {
 $remaining = Get-ChildItem -Path $ScriptRoot -Force -ErrorAction SilentlyContinue |
     Where-Object { -not $selfPath -or ((Resolve-Path $_.FullName -ErrorAction SilentlyContinue).Path -ine $selfPath) }
 if (-not $remaining) {
-    try {
+    if (Invoke-WithRetry -Label "Remove source folder $ScriptRoot" -Attempts 5 -DelaySeconds 2 -Action {
         Remove-Item -Path $ScriptRoot -Force -ErrorAction Stop
+    }) {
         Write-Host "Removed empty source folder: $ScriptRoot"
-    } catch {
+    } else {
         # Will be retried after self-move clears the last item.
         Write-Host "Source folder not yet empty (self still present); will retry after self-move."
     }
@@ -110,11 +138,14 @@ if ($selfPath) {
     $selfDst  = Join-Path $ProjectMemoryFolder $selfName
 
     if (-Not (Test-Path $selfDst)) {
-        try {
+        if (Invoke-WithRetry -Label "Move self $selfName" -Attempts 5 -DelaySeconds 2 -Action {
             Move-Item -Path $selfPath -Destination $selfDst -Force -ErrorAction Stop
+        }) {
             # Also attempt to remove the now-empty ScriptRoot.
-            Remove-Item -Path $ScriptRoot -Force -ErrorAction SilentlyContinue
-        } catch {
+            Invoke-WithRetry -Label "Remove source folder $ScriptRoot after self-move" -Attempts 5 -DelaySeconds 2 -Action {
+                Remove-Item -Path $ScriptRoot -Force -ErrorAction Stop
+            } | Out-Null
+        } else {
             # Schedule via cmd after this process exits.
             $tmpCmd = [System.IO.Path]::Combine(
                 [System.IO.Path]::GetTempPath(),
