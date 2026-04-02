@@ -90,7 +90,6 @@ if [ ! -d "$project_memory/.venv" ]; then
     echo "Warning: venv creation failed or timed out; retrying with --without-pip fallback."
     "$python_exec" -m venv --without-pip "$project_memory/.venv"
     "$project_memory/.venv/bin/python" -m ensurepip --default-pip
-    "$project_memory/.venv/bin/python" -m pip install --upgrade pip
   fi
 else
   echo ".venv already exists, skipping creation."
@@ -103,10 +102,7 @@ if [ ! -x "$venv_python" ]; then
 fi
 
 echo "Installing package from $source_root..."
-if ! "$venv_python" -m pip install --upgrade pip --disable-pip-version-check --no-input; then
-  echo "Warning: pip self-upgrade failed (continuing)"
-fi
-"$venv_python" -m pip install -e "$source_root"
+"$venv_python" -m pip install --disable-pip-version-check --no-input -e "$source_root"
 
 db_path="$project_memory/pm_data/project_memory.db"
 export_dir="$project_memory/pm_exports"

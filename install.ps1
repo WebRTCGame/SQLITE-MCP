@@ -100,7 +100,6 @@ if (-Not (Test-Path $venvPath)) {
         $fallbackPython = Join-Path $venvPath 'Scripts\python.exe'
         Write-Host "Bootstrapping pip in fallback venv..."
         & $fallbackPython -m ensurepip --default-pip
-        & $fallbackPython -m pip install --upgrade pip
     }
 } else {
     Write-Host ".venv already exists at $venvPath, skipping creation."
@@ -114,12 +113,7 @@ if (-Not (Test-Path $venvPython)) {
 
 Write-Host "Using virtual environment python: $venvPython"
 Write-Host "Installing package from $sourceRoot..."
-try {
-    & $venvPython -m pip install --upgrade pip --disable-pip-version-check --no-input
-} catch {
-    Write-Warning "pip self-upgrade failed (continuing): $($_.Exception.Message)"
-}
-& $venvPython -m pip install -e $sourceRoot
+& $venvPython -m pip install --disable-pip-version-check --no-input -e $sourceRoot
 
 $dbPath    = Join-Path $projectMemoryFolder 'pm_data\project_memory.db'
 $exportDir = Join-Path $projectMemoryFolder 'pm_exports'
