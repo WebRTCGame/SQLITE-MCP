@@ -23,6 +23,20 @@ if ($LogFile) {
 $ErrorActionPreference = 'Stop'
 Write-Host "=== SQLite MCP install script started ==="
 
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Command,
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code $LASTEXITCODE"
+    }
+}
+
 # The install script lives inside the sqlite-mcp checkout.
 # If the directory is named 'sqlite-mcp', the user's project root is its parent.
 $scriptRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
@@ -113,12 +127,18 @@ if (-Not (Test-Path $venvPython)) {
 
 Write-Host "Using virtual environment python: $venvPython"
 Write-Host "Installing package from $sourceRoot..."
-& $venvPython -m pip install --disable-pip-version-check --no-input wheel
+Invoke-NativeCommand -Label 'Install build prerequisites' -Command {
+    & $venvPython -m pip install --disable-pip-version-check --no-input setuptools wheel
+}
 if ($isNestedInstall) {
     Write-Host "Nested install detected: using non-editable package install because source files move into Project Memory after install."
-    & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation $sourceRoot
+    Invoke-NativeCommand -Label 'Install package' -Command {
+        & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation $sourceRoot
+    }
 } else {
-    & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation -e $sourceRoot
+    Invoke-NativeCommand -Label 'Install package' -Command {
+        & $venvPython -m pip install --disable-pip-version-check --no-input --no-build-isolation -e $sourceRoot
+    }
 }
 
 $dbPath    = Join-Path $projectMemoryFolder 'pm_data\project_memory.db'
@@ -131,7 +151,9 @@ if (-Not (Test-Path $exportDir))           { New-Item -ItemType Directory -Path 
 Write-Host "Bootstrapping project memory..."
 $env:SQLITE_MCP_DB_PATH    = $dbPath
 $env:SQLITE_MCP_EXPORT_DIR = $exportDir
-& $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" bootstrap-self --repo-root "$projectRoot"
+Invoke-NativeCommand -Label 'Bootstrap project memory' -Command {
+    & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" bootstrap-self --repo-root "$projectRoot"
+}
 
 # Stop any running server processes before health checks
 Write-Host "Checking for running sqlite_mcp_server processes..."
@@ -153,8 +175,12 @@ if ($runningMcp) {
 }
 
 Write-Host "Running health checks..."
-& $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" project-state
-& $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" health
+Invoke-NativeCommand -Label 'Project state health check' -Command {
+    & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" project-state
+}
+Invoke-NativeCommand -Label 'Database health check' -Command {
+    & $venvPython -m sqlite_project_memory_admin --db-path "$dbPath" health
+}
 
 # Write .vscode/mcp.json (always project-local)
 $projectVscode = Join-Path $projectRoot '.vscode'

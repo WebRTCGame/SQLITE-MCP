@@ -56,7 +56,7 @@ Optional flag:
 - `--log-file install.log` — save a full transcript for debugging
 - `--append-instructions` — append snippet to the suggested instructions file (idempotent)
 
-**To update:** re-run the same command. The installer is idempotent — it skips steps already done and upgrades the package in place.
+**To update:** after a successful nested install, the scripts live under `Project Memory/` because the `sqlite-mcp` checkout is moved there. Re-run the installer from your project root with `Project Memory\install.ps1` (Windows) or `Project Memory/install.sh` (Linux/macOS). For in-place/developer installs, re-run the same command.
 
 ### pip only (developer / advanced)
 
@@ -75,7 +75,7 @@ Full example:
 ### Start server
 
 ```powershell
-python -m sqlite_mcp_server
+& ".\Project Memory\.venv\Scripts\python.exe" -m sqlite_mcp_server
 ```
 
 ## Paths

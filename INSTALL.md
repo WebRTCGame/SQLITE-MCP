@@ -45,9 +45,11 @@ MCP config:     C:\Your\Project\.vscode\mcp.json
 
 ## Update
 
-Re-run the same command from your project root. The installer is idempotent:
+After a successful nested install, the scripts live under `Project Memory/` because the `sqlite-mcp` checkout is moved there.
+Re-run the installer from your project root using `Project Memory\install.ps1` (Windows) or `Project Memory/install.sh` (Linux/macOS).
+For in-place/developer installs, re-run the same command. The installer is idempotent:
 - skips venv creation if `.venv` already exists
-- re-runs `pip install -e .` to pick up any package changes
+- re-runs package install to pick up any package changes
 - overwrites the `sqlite-project-memory` entry in `.vscode/mcp.json`
 
 ---
@@ -57,21 +59,21 @@ Re-run the same command from your project root. The installer is idempotent:
 Pass `-LogFile` (PowerShell) or `--log-file` (bash) to save a full transcript for debugging:
 
 ```powershell
-.\sqlite-mcp\install.ps1 -LogFile install.log
+.\Project Memory\install.ps1 -LogFile install.log
 ```
 
 ```bash
-./sqlite-mcp/install.sh --log-file install.log
+bash "Project Memory/install.sh" --log-file install.log
 ```
 
 Optional: append the SQLite Project Memory snippet automatically to the suggested instructions file:
 
 ```powershell
-.\sqlite-mcp\install.ps1 -AppendInstructions
+.\Project Memory\install.ps1 -AppendInstructions
 ```
 
 ```bash
-./sqlite-mcp/install.sh --append-instructions
+bash "Project Memory/install.sh" --append-instructions
 ```
 
 ---
@@ -198,12 +200,12 @@ Two scripts are provided. Run from inside the repository (or the target project 
 
 ```powershell
 # Windows
-.\sqlite-mcp\uninstall.ps1
+.\Project Memory\uninstall.ps1
 ```
 
 ```bash
 # Linux / macOS
-bash sqlite-mcp/uninstall.sh
+bash "Project Memory/uninstall.sh"
 ```
 
 ### Default behaviour (safe)
