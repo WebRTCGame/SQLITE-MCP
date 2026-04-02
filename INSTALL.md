@@ -184,3 +184,43 @@ To maximize reliable MCP usage, all gates below should be true:
 7. First prompt in session calls `get_project_context` and then `get_recent_activity` or `query_view`.
 
 If tools still do not appear after all file-based gates pass, reload the VS Code window and re-open Agent mode.
+
+---
+
+## Uninstall
+
+Two scripts are provided. Run from inside the repository (or the target project root if you installed into one).
+
+```powershell
+# Windows
+.\sqlite-mcp\uninstall.ps1
+```
+
+```bash
+# Linux / macOS
+bash sqlite-mcp/uninstall.sh
+```
+
+### Default behaviour (safe)
+
+- Exports all project memory to markdown views + a JSON snapshot under `Project Memory/pm_exports/uninstall-backup-<timestamp>/` **before any deletion**.
+- Removes the `sqlite-project-memory` entry from `.vscode/mcp.json`.
+- Removes the deployed agent and skill files from `.github/`.
+- Removes the `.install-complete` marker.
+- Prompts `[y/N]` before each destructive step unless `--force` / `-Force` is supplied.
+- Does **not** delete the virtual environment, database, or exports by default.
+
+### Optional flags
+
+| Flag (PowerShell / Bash) | Effect |
+|---|---|
+| `-RemoveRuntime` / `--remove-runtime` | Also delete `Project Memory/.venv` |
+| `-RemoveData` / `--remove-data` | Also delete `pm_data` and `pm_exports` (the pre-uninstall backup too) |
+| `-RemoveCustomizations` / `--remove-customizations` | Also remove `.github/agents/project-memory.agent.md` and `.github/skills/sqlite-project-memory/` |
+| `-RemoveAll` / `--remove-all` | All three flags above plus remove the empty `Project Memory/` folder |
+| `-Force` / `--force` | Skip all `[y/N]` prompts (for automation) |
+| `-LogFile <path>` / `--log-file <path>` | Save full transcript to a file |
+
+### Manual cleanup
+
+If you added the SQLite Project Memory instructions snippet to your own instructions file (`copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, etc.), remove that section manually — the uninstall scripts do not modify user-owned instruction files.

@@ -50,49 +50,14 @@ else
   is_nested_install=false
 fi
 
-flatten_nested_checkout() {
-  local s_root="$1"
-  local r_root="$2"
-  local pm="$3"
-
-  if [ "$s_root" = "$r_root" ]; then return; fi
-
-  if [ ! -f "$s_root/pyproject.toml" ]; then
-    echo "No nested checkout pyproject.toml at $s_root; skipping flattening."
-    return
-  fi
-
-  echo "Moving repository source from $s_root into Project Memory: $pm"
-
-  shopt -s dotglob nullglob
-  for item in "$s_root"/*; do
-    if [ "$item" = "$pm" ]; then continue; fi
-    if [ "$item" = "${BASH_SOURCE[0]}" ]; then
-      echo "Skipping running install script in move: $item"
-      continue
-    fi
-    dest="$pm/$(basename "$item")"
-    if [ -e "$dest" ]; then
-      echo "Destination already exists, not overwriting: $dest"
-      continue
-    fi
-    mv "$item" "$dest" || echo "Warning: failed to move $item -> $dest"
-  done
-  shopt -u dotglob nullglob
-
-  if [ -z "$(ls -A "$s_root")" ]; then
-    rmdir "$s_root" || true
-  fi
-}
-
-# Move repo contents into Project Memory so nothing from sqlite-mcp pollutes the user's project root.
-if [ "$is_nested_install" = true ]; then
-  flatten_nested_checkout "$script_root" "$repo_root" "$project_memory"
-fi
-
-# Resolve source root: developer scenario (repo_root IS the repo), PM folder (nested install), fallback.
+# Resolve source root: developer scenario (repo_root IS the repo), nested install (pyproject.toml
+# still in script_root because _finalize-install.sh runs after this script exits), PM folder
+# (already moved from a prior run), or fallback.
 if [ -f "$repo_root/pyproject.toml" ]; then
   source_root="$repo_root"
+elif [ "$is_nested_install" = true ] && [ -f "$script_root/pyproject.toml" ]; then
+  source_root="$script_root"
+  echo "Nested install: using $script_root as source root for pip install."
 elif [ -f "$project_memory/pyproject.toml" ]; then
   source_root="$project_memory"
   echo "Using Project Memory folder as source root: $source_root"
@@ -298,17 +263,20 @@ else
   echo "Install marker already present (update complete): $installation_marker"
 fi
 
-# For nested installs: remove any sqlite-mcp source files that leaked into project root.
-# (All source should have moved into Project Memory; this is a safety net only.)
+# For nested installs: launch _finalize-install.sh as a detached background process.
+# It waits for this installer to exit (releasing any locks), then moves all remaining
+# source files — including install.sh, install.ps1, and itself — into Project Memory.
 if [ "$is_nested_install" = true ]; then
-  for artifact in src tests pyproject.toml README.md INSTALL.md 'API SUMMARY.md' Chart.mmd install.ps1 .gitignore tmp_views tmp_smoke_test.py tmp.db tmp.db-shm tmp.db-wal; do
-    path="$repo_root/$artifact"
-    if [ -e "$path" ]; then
-      echo "Removing leaked source artifact from project root: $path"
-      rm -rf "$path" || echo "Warning: failed to remove $path"
-    fi
-  done
-  echo "Nested install complete. Project Memory contains all sqlite-mcp source and runtime files."
+  finalize_script="$script_root/_finalize-install.sh"
+  finalize_log="$project_memory/finalize-install.log"
+  if [ -f "$finalize_script" ]; then
+    echo "Launching post-install file reorganization (background)..."
+    echo "Finalize log: $finalize_log"
+    nohup bash "$finalize_script" "$script_root" "$repo_root" "$project_memory" \
+      > "$finalize_log" 2>&1 &
+  else
+    echo "Warning: finalize script not found at $finalize_script; skipping post-install cleanup."
+  fi
 fi
 
 echo "=== Install complete ==="

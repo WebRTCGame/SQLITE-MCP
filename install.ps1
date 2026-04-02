@@ -34,62 +34,6 @@ if ([System.IO.Path]::GetFileName($scriptRoot) -ieq 'sqlite-mcp') {
 
 Write-Host "Using project root: $projectRoot"
 Set-Location $projectRoot
-
-function Move-NestedCheckout {
-    param(
-        [string]$ScriptRoot,
-        [string]$ProjectRoot,
-        [string]$ProjectMemoryFolder,
-        [string]$InstallScriptPath
-    )
-
-    if ($ScriptRoot -eq $ProjectRoot) { return }
-
-    if (-Not (Test-Path (Join-Path $ScriptRoot 'pyproject.toml'))) {
-        Write-Host "No nested checkout pyproject.toml found in $ScriptRoot. Skipping flattening."
-        return
-    }
-
-    Write-Host "Moving repository source from $ScriptRoot into Project Memory: $ProjectMemoryFolder"
-    foreach ($item in Get-ChildItem -Path $ScriptRoot -Force) {
-        $src = $item.FullName
-
-        # Skip current ps script while running
-        if ($InstallScriptPath -and (Resolve-Path -Path $InstallScriptPath -ErrorAction SilentlyContinue).Path -eq $src) {
-            Write-Host "Skipping running install script file from move: $src"
-            continue
-        }
-
-        # Skip relocation of the project memory folder itself
-        if ($ProjectMemoryFolder -and (Resolve-Path -Path $src -ErrorAction SilentlyContinue).Path -eq (Resolve-Path -Path $ProjectMemoryFolder -ErrorAction SilentlyContinue).Path) {
-            continue
-        }
-
-        $dst = Join-Path $ProjectMemoryFolder $item.Name
-        if (Test-Path $dst) {
-            Write-Host "Destination already exists, not overwriting: $dst"
-            continue
-        }
-
-        try {
-            Move-Item -Path $src -Destination $dst -Force
-            Write-Host "Moved $src -> $dst"
-        } catch {
-            Write-Warning ("Unable to move {0} -> {1}: {2}" -f $src, $dst, $_)
-        }
-    }
-
-    # Remove empty original folder if appropriate
-    if (-Not (Get-ChildItem -Path $ScriptRoot -Force | Where-Object { $_.Name -notin '.','..' })) {
-        try {
-            Remove-Item -Path $ScriptRoot -Force
-            Write-Host "Removed empty nested checkout folder $ScriptRoot"
-        } catch {
-            Write-Warning ("Could not remove folder {0}: {1}" -f $ScriptRoot, $_)
-        }
-    }
-}
-
 $projectMemoryFolder = Join-Path $projectRoot 'Project Memory'
 if (-Not (Test-Path $projectMemoryFolder)) {
     Write-Host "Creating Project Memory folder: $projectMemoryFolder"
@@ -99,15 +43,14 @@ if (-Not (Test-Path $projectMemoryFolder)) {
 # Track whether this is a nested install (sqlite-mcp repo lives inside the user's project).
 $isNestedInstall = $scriptRoot -ne $projectRoot
 
-# Move repo contents into Project Memory so nothing from sqlite-mcp pollutes the user's project root.
-if ($isNestedInstall) {
-    Move-NestedCheckout -ScriptRoot $scriptRoot -ProjectRoot $projectRoot -ProjectMemoryFolder $projectMemoryFolder -InstallScriptPath $MyInvocation.MyCommand.Path
-    $scriptRoot = $projectRoot
-}
-
-# Resolve source root: developer scenario (projectRoot IS the repo), PM folder (nested install), fallback.
+# Resolve source root: developer scenario (projectRoot IS the repo), nested install (pyproject.toml
+# still in scriptRoot because _finalize-install.ps1 runs after this script exits), PM folder
+# (already moved from a prior run), or fallback.
 if (Test-Path (Join-Path $projectRoot 'pyproject.toml')) {
     $sourceRoot = $projectRoot
+} elseif ($isNestedInstall -and (Test-Path (Join-Path $scriptRoot 'pyproject.toml'))) {
+    $sourceRoot = $scriptRoot
+    Write-Host "Nested install: using $scriptRoot as source root for pip install."
 } elseif (Test-Path (Join-Path $projectMemoryFolder 'pyproject.toml')) {
     $sourceRoot = $projectMemoryFolder
     Write-Host "Using Project Memory folder as source root for pip install: $sourceRoot"
@@ -381,25 +324,26 @@ if (-Not (Test-Path $installationMarker)) {
 
 # For nested installs: remove any sqlite-mcp source files that leaked into project root.
 # (All source should have moved into Project Memory; this is a safety net only.)
+# For nested installs: launch _finalize-install.ps1 as a detached background process.
+# It waits for this installer to exit (releasing file locks), then moves all remaining
+# source files — including install.ps1, install.sh, and itself — into Project Memory.
 if ($isNestedInstall) {
-    $leakedArtifacts = @(
-        'src', 'tests', 'pyproject.toml', 'README.md', 'INSTALL.md',
-        'API SUMMARY.md', 'Chart.mmd', 'install.sh', '.gitignore',
-        'tmp_views', 'tmp_smoke_test.py', 'tmp.db', 'tmp.db-shm', 'tmp.db-wal'
-    )
-    foreach ($artifact in $leakedArtifacts) {
-        $path = Join-Path $projectRoot $artifact
-        if (Test-Path $path) {
-            Write-Host "Removing leaked source artifact from project root: $path"
-            try {
-                Remove-Item -Path $path -Recurse -Force -ErrorAction Stop
-            } catch {
-                $errMsg = $_.Exception.Message
-                Write-Warning "Could not remove ${path}: $errMsg"
-            }
-        }
+    $finalizeScript = Join-Path $scriptRoot '_finalize-install.ps1'
+    $finalizeLog    = Join-Path $projectMemoryFolder 'finalize-install.log'
+    if (Test-Path $finalizeScript) {
+        Write-Host "Launching post-install file reorganization (background)..."
+        Write-Host "Finalize log: $finalizeLog"
+        Start-Process powershell -ArgumentList @(
+            '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
+            '-File', $finalizeScript,
+            '-ScriptRoot', $scriptRoot,
+            '-ProjectRoot', $projectRoot,
+            '-ProjectMemoryFolder', $projectMemoryFolder,
+            '-LogFile', $finalizeLog
+        )
+    } else {
+        Write-Warning "Finalize script not found at $finalizeScript; skipping post-install cleanup."
     }
-    Write-Host "Nested install complete. Project Memory contains all sqlite-mcp source and runtime files."
 }
 
 Write-Host "=== Install complete ==="

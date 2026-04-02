@@ -41,10 +41,10 @@ Before making changes:
 ### Add a task
 
 ```json
-create_entity({
+get_or_create_entity({
   "entity_type": "task",
   "name": "Short task title",
-  "summary": "What needs to be done and why",
+  "description": "What needs to be done and why",
   "status": "open"
 })
 ```
@@ -52,10 +52,10 @@ create_entity({
 ### Record a decision
 
 ```json
-create_entity({
+get_or_create_entity({
   "entity_type": "decision",
   "name": "Decision title",
-  "summary": "What was decided",
+  "description": "What was decided",
   "attributes": {
     "rationale": "Why this was chosen",
     "alternatives": "What else was considered"
@@ -66,10 +66,10 @@ create_entity({
 ### Document a component
 
 ```json
-create_entity({
+get_or_create_entity({
   "entity_type": "component",
   "name": "Component name",
-  "summary": "What this component does"
+  "description": "What this component does"
 })
 ```
 
@@ -77,16 +77,17 @@ Then attach detailed content:
 
 ```json
 write_content({
-  "entity_id": "<id from create_entity>",
-  "content_type": "note",
-  "body": "# Component Details\n\nMarkdown content goes here..."
+  "entity_id": "<id from previous call>",
+  "mode": "append",
+  "content_type": "markdown",
+  "content": "# Component Details\n\nMarkdown content goes here..."
 })
 ```
 
 ### Query current project state
 
 ```json
-query_view({ "view_name": "task_summary" })
+query_view({ "view_name": "open_tasks" })
 list_entities({ "entity_type": "task", "status": "open" })
 ```
 
@@ -99,9 +100,9 @@ search_content({ "query": "authentication approach" })
 ### Link two entities
 
 ```json
-add_relationship({
-  "from_entity_id": "task-abc123",
-  "to_entity_id": "decision-def456",
+connect_entities({
+  "from_entity": "task-abc123",
+  "to_entity": "decision-def456",
   "relationship_type": "implements"
 })
 ```
@@ -112,7 +113,7 @@ add_relationship({
 update_entity({
   "entity_id": "<id>",
   "status": "done",
-  "summary": "Updated summary"
+  "description": "Updated description"
 })
 ```
 
@@ -122,6 +123,6 @@ update_entity({
 export_markdown_views({
   "user_requested": true,
   "request_reason": "User requested export for review",
-  "view_names": ["todo", "decisions", "architecture"]
+  "view_names": ["open_tasks", "decision_log", "architecture_summary"]
 })
 ```

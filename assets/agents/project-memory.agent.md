@@ -56,7 +56,7 @@ Always begin by:
 | `list_entities` | List entities filtered by type, status, or tags |
 | `find_similar_entities` | Find entities by fuzzy name match |
 | `search_content` | Full-text search across all entity content |
-| `query_view` | Run a named summary view (e.g. `task_summary`) |
+| `query_view` | Run a named summary view (e.g. `open_tasks`, `decision_log`) |
 | `list_views` | List all available summary views |
 | `get_recent_activity` | See what changed recently |
 | `add_relationship` | Link two entities with a typed relationship |
