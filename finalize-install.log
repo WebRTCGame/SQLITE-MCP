@@ -1,0 +1,55 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20260403111651
+Username: DESKTOP-TF52NCG\georg
+RunAs User: DESKTOP-TF52NCG\georg
+Configuration Name: 
+Machine: DESKTOP-TF52NCG (Microsoft Windows NT 10.0.26200.0)
+Host Application: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File D:\Programming Projects\SQLITE MCP\SQLITE-MCP\sqlite-mcp\_finalize-install.ps1 -ScriptRoot D:\Programming Projects\SQLITE MCP\SQLITE-MCP\sqlite-mcp -ProjectRoot D:\Programming Projects\SQLITE MCP\SQLITE-MCP -ProjectMemoryFolder D:\Programming Projects\SQLITE MCP\SQLITE-MCP\Project Memory -LogFile D:\Programming Projects\SQLITE MCP\SQLITE-MCP\Project Memory\finalize-install.log
+Process ID: 29280
+PSVersion: 5.1.26100.8115
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.8115
+BuildVersion: 10.0.26100.8115
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+=== SQLite MCP post-install finalize started ===
+Source:      D:\Programming Projects\SQLITE MCP\SQLITE-MCP\sqlite-mcp
+Destination: D:\Programming Projects\SQLITE MCP\SQLITE-MCP\Project Memory
+Moved: .git
+Moved: .github
+Moved: assets
+Moved: src
+Moved: tests
+Moved: tmp_views
+Moved: .gitignore
+Moved: .python-version
+Moved: API SUMMARY.md
+Moved: Chart.mmd
+Moved: INSTALL.md
+Moved: install.ps1
+Moved: install.sh
+Moved: LICENSE
+Moved: pyproject.toml
+Moved: README.md
+Moved: uninstall.ps1
+Moved: uninstall.sh
+Moved: _finalize-install.sh
+Removed leaked artifact: src
+Removed leaked artifact: tests
+Removed leaked artifact: pyproject.toml
+Removed leaked artifact: README.md
+Removed leaked artifact: INSTALL.md
+Removed leaked artifact: API SUMMARY.md
+Removed leaked artifact: Chart.mmd
+Removed leaked artifact: .gitignore
+Removed leaked artifact: tmp_views
+Removed empty source folder: D:\Programming Projects\SQLITE MCP\SQLITE-MCP\sqlite-mcp
+Finalize: moved=19  skipped=0  errors=0
+**********************
+Windows PowerShell transcript end
+End time: 20260403111654
+**********************
