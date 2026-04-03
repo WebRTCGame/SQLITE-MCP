@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 Write-Host "=== SQLite MCP install script started ==="
 
 # ---- Managed Runtime: Pinned Versions -----------------------------------------------
-# uv downloads and manages a pinned CPython interpreter - no local Python prerequisite.
+# uv downloads and manages a pinned CPython interpreter — no local Python prerequisite.
 # Override with environment variables if needed:
 #   $env:SQLITE_MCP_UV_VERSION      e.g. "0.6.6"
 #   $env:SQLITE_MCP_PYTHON_VERSION  e.g. "3.13.0"
@@ -166,7 +166,7 @@ if (-Not (Test-Path $venvPath)) {
             & $uvExe venv --python $PythonVersion $venvPath
         }
     } else {
-        Write-Host "uv unavailable - falling back to system Python for venv creation..."
+        Write-Host "uv unavailable — falling back to system Python for venv creation..."
         try {
             $fbJob = Start-Job -ScriptBlock { param($t); python -m venv $t } -ArgumentList $venvPath
             if (-not (Wait-Job $fbJob -Timeout 300)) {
@@ -207,7 +207,7 @@ if ($uvExe -and (Test-Path $uvExe)) {
         }
     }
 } else {
-    Write-Host "uv unavailable - falling back to pip..."
+    Write-Host "uv unavailable — falling back to pip..."
     Invoke-NativeCommand -Label 'Install build prerequisites (pip)' -Command {
         & $venvPython -m pip install --disable-pip-version-check --no-input setuptools wheel
     }
@@ -326,7 +326,7 @@ if (Test-Path $assetsDir) {
         Write-Host "Deployed agent: $agentDstDir\project-memory.agent.md"
     }
 
-    # --- copilot-instructions snippet (print notice - user must add manually) ---
+    # --- copilot-instructions snippet (print notice — user must add manually) ---
     $snippetSrc = Join-Path $assetsDir 'copilot-instructions-snippet.md'
     if (Test-Path $snippetSrc) {
         $snippetCopied = $false
@@ -429,8 +429,8 @@ if (-Not (Test-Path $installationMarker)) {
 
 # For nested installs: schedule _finalize-install.ps1 through a temporary cmd.exe wrapper.
 # That wrapper waits for this installer to exit, then runs the finalizer with
-# ExecutionPolicy Bypass so the remaining source files - including install.ps1,
-# install.sh, and the finalize script itself - are moved into Project Memory.
+# ExecutionPolicy Bypass so the remaining source files — including install.ps1,
+# install.sh, and the finalize script itself — are moved into Project Memory.
 if ($isNestedInstall) {
     $finalizeScript = Join-Path $scriptRoot '_finalize-install.ps1'
     $finalizeLog    = Join-Path $projectMemoryFolder 'finalize-install.log'
