@@ -1,0 +1,36 @@
+flowchart TD
+  subgraph HOST["Host Project (user's project root)"]
+    A[.vscode/mcp.json]
+  end
+
+  subgraph PM["Project Memory/ (all sqlite-mcp files)"]
+    B[.install-complete]
+    C[.venv/]
+    D[pm_data/]
+      D --> E[project_memory.db]
+    F[pm_exports/]
+    G[src/]
+      G --> H[sqlite_mcp_server/]
+    I[tests/]
+    J[pyproject.toml]
+    K[README.md]
+    L[INSTALL.md]
+    M[API SUMMARY.md]
+    N[Chart.mmd]
+    O[install.ps1]
+    P[install.sh]
+    Q[.gitignore]
+  end
+
+  HOST --> PM
+
+  subgraph DEV["Developer scenario only (projectRoot IS the repo)"]
+    R[src/]
+    S[tests/]
+    T[pyproject.toml]
+    U[Project Memory/]
+      U --> V[.install-complete]
+      U --> W[.venv/]
+      U --> X[pm_data/]
+      U --> Y[pm_exports/]
+  end
