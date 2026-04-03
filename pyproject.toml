@@ -26,11 +26,13 @@ sqlite-project-memory-admin = "sqlite_mcp_server.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["Project Memory", ".venv", "build", "dist"]
+
 # ---- Managed Runtime ----
 # The installer downloads uv and uses it to fetch the pinned CPython interpreter
 # declared in .python-version (3.12.9). No local Python installation is required.
 # uv itself is stored in Project Memory/.uv/bin/; the Python interpreter is cached
 # in Project Memory/.uv/python/.
 # To override the pinned Python version set env var: SQLITE_MCP_PYTHON_VERSION
-[tool.uv]
-python-version = "3.12"

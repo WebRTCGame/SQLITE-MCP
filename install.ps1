@@ -60,9 +60,14 @@ function Invoke-NativeCommand {
 }
 
 # The install script lives inside the sqlite-mcp checkout.
-# If the directory is named 'sqlite-mcp', the user's project root is its parent.
+# Treat as nested only when running from a bundled sqlite-mcp folder that is not
+# itself a git checkout. This avoids false positives for standalone repos named SQLITE-MCP.
 $scriptRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
-if ([System.IO.Path]::GetFileName($scriptRoot) -ieq 'sqlite-mcp') {
+$scriptFolderName = [System.IO.Path]::GetFileName($scriptRoot)
+$scriptRootHasGit = Test-Path (Join-Path $scriptRoot '.git')
+$isNestedInstall = ($scriptFolderName -ieq 'sqlite-mcp') -and (-not $scriptRootHasGit)
+
+if ($isNestedInstall) {
     $projectRoot = Split-Path $scriptRoot -Parent
 } else {
     $projectRoot = $scriptRoot
@@ -77,7 +82,7 @@ if (-Not (Test-Path $projectMemoryFolder)) {
 }
 
 # Track whether this is a nested install (sqlite-mcp repo lives inside the user's project).
-$isNestedInstall = $scriptRoot -ne $projectRoot
+# Value assigned above as part of root detection.
 
 # Resolve source root: developer scenario (projectRoot IS the repo), nested install (pyproject.toml
 # still in scriptRoot because _finalize-install.ps1 runs after this script exits), PM folder
@@ -191,6 +196,22 @@ if (-Not (Test-Path $venvPython)) {
     Write-Error "Virtual environment python not found at $venvPython"
     exit 1
 }
+
+# Compatibility shim: keep .venv\Scripts\Activate.ps1 at repo root for users and tools
+# that still expect the old activation path.
+$legacyActivate = Join-Path $projectRoot '.venv\Scripts\Activate.ps1'
+$legacyScriptsDir = Split-Path -Parent $legacyActivate
+if (-Not (Test-Path $legacyScriptsDir)) {
+    New-Item -ItemType Directory -Path $legacyScriptsDir -Force | Out-Null
+}
+$legacyContent = @"
+param(
+    [Parameter(ValueFromRemainingArguments = `$true)]
+    [string[]]`$ArgsFromCaller
+)
+& '$venvPath\Scripts\Activate.ps1' @ArgsFromCaller
+"@
+Set-Content -Path $legacyActivate -Value $legacyContent -Encoding UTF8
 
 Write-Host "Using virtual environment python: $venvPython"
 Write-Host "Installing package from $sourceRoot..."
