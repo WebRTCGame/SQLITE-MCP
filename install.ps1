@@ -120,6 +120,7 @@ foreach ($mapping in $moveMappings) {
 $venvPath = Join-Path $projectMemoryFolder '.venv'
 $uvBinDir = Join-Path $projectMemoryFolder '.uv\bin'
 $uvPyDir  = Join-Path $projectMemoryFolder '.uv\python'
+$venvPython = Join-Path $venvPath 'Scripts\python.exe'
 
 function Get-UvBinary {
     param([string]$BinDir, [string]$Version)
@@ -163,7 +164,11 @@ function Get-UvBinary {
 
 $uvExe = Get-UvBinary -BinDir $uvBinDir -Version $UvVersion
 
-if (-Not (Test-Path $venvPath)) {
+if (-Not (Test-Path $venvPython)) {
+    if (Test-Path $venvPath) {
+        Write-Warning "Existing .venv is incomplete (missing python.exe). Recreating virtual environment."
+        Remove-Item -Path $venvPath -Recurse -Force -ErrorAction Stop
+    }
     if ($uvExe) {
         Write-Host "Creating virtual environment (Python $PythonVersion via uv)..."
         $env:UV_PYTHON_INSTALL_DIR = $uvPyDir
@@ -191,7 +196,6 @@ if (-Not (Test-Path $venvPath)) {
     Write-Host ".venv already exists at $venvPath, skipping creation."
 }
 
-$venvPython = Join-Path $venvPath 'Scripts\python.exe'
 if (-Not (Test-Path $venvPython)) {
     Write-Error "Virtual environment python not found at $venvPython"
     exit 1
